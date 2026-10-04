@@ -438,7 +438,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
     }
 
     private Kind list(TypeMirror element) {
-        String elementType = types.erasure(element).toString();
+        String elementType = typeName(element);
         switch (element.getKind()) {
             case INT, LONG, SHORT, BYTE:
                 return new Kind(What.VAR, VarType.LIST, "int", elementType, null, null);
@@ -450,13 +450,25 @@ public final class DocuconfProcessor extends AbstractProcessor {
         TypeElement te = (TypeElement) types.asElement(element);
         String n = te.getQualifiedName().toString();
         if (Set.of("java.lang.Integer", "java.lang.Long", "java.lang.Short", "java.lang.Byte").contains(n)) {
-            return new Kind(What.VAR, VarType.LIST, "int", n, null, null);
+            return new Kind(What.VAR, VarType.LIST, "int", typeName(element), null, null);
         }
         if (n.equals("java.lang.String") || te.getKind() == ElementKind.ENUM || STRING_LIKE.contains(n)
                 || n.equals("java.net.URI")) {
-            return new Kind(What.VAR, VarType.LIST, "string", n, null, null);
+            return new Kind(What.VAR, VarType.LIST, "string", typeName(element), null, null);
         }
         return Kind.skip("lists of " + n + " (objects) cannot be expressed in v1alpha1 types");
+    }
+
+    /** The name {@code Class.forName} takes: binary names for classes, {@code int} for primitives. */
+    private String typeName(TypeMirror t) {
+        TypeMirror e = types.erasure(t);
+        if (e.getKind() == TypeKind.DECLARED) {
+            return elements.getBinaryName((TypeElement) types.asElement(e)).toString();
+        }
+        if (e.getKind() == TypeKind.ARRAY) {
+            return typeName(((ArrayType) e).getComponentType()) + "[]";
+        }
+        return e.getKind().isPrimitive() ? e.getKind().name().toLowerCase(Locale.ROOT) : e.toString();
     }
 
     private boolean isScalar(TypeMirror t) {
@@ -517,7 +529,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 }
                 v.maxLength = c.sizeMax;
                 v.pattern = c.pattern != null ? c.pattern : c.notBlank ? "\\S" : null;
-                if (types.erasure(p.type()).toString().equals("org.springframework.util.unit.DataSize")) {
+                if (typeName(p.type()).equals("org.springframework.util.unit.DataSize")) {
                     v.pattern = "^[0-9]+(B|KB|MB|GB|TB)?$";
                 }
             }
@@ -585,7 +597,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
         contract.vars.put(envName, v);
         elementsByInput.put(envName, p.element());
         bindings.vars.put(envName, new Bindings.PropertyBinding(root, javaPath, configKey,
-                types.erasure(p.type()).toString(), kind.elementType(), unit));
+                typeName(p.type()), kind.elementType(), unit));
         pending.add(new PendingVar(v, p, kind, unit));
     }
 
@@ -621,7 +633,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
         String path = Mirrors.string(elements, m, "value");
         String explicitName = Mirrors.string(elements, m, "name");
         String name = explicitName == null || explicitName.isEmpty() ? Names.kebab(p.javaName()) : explicitName;
-        String typeName = types.erasure(p.type()).toString();
+        String typeName = typeName(p.type());
         FileType type;
         String expected;
         switch (annotationName.substring(D.length())) {
