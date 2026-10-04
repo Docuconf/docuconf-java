@@ -1,0 +1,175 @@
+package dev.docuconf.processor;
+
+import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.ExpressionTree;
+import com.sun.source.tree.IdentifierTree;
+import com.sun.source.tree.LiteralTree;
+import com.sun.source.tree.MemberSelectTree;
+import com.sun.source.tree.MethodInvocationTree;
+import com.sun.source.tree.NewClassTree;
+import com.sun.source.tree.ParenthesizedTree;
+import com.sun.source.tree.Tree;
+import com.sun.source.tree.TypeCastTree;
+import com.sun.source.tree.UnaryTree;
+import com.sun.source.tree.VariableTree;
+import com.sun.source.util.TreePath;
+import com.sun.source.util.Trees;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import javax.annotation.processing.ProcessingEnvironment;
+import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.VariableElement;
+
+/**
+ * Reads field initializers ({@code private int port = 8080;}) through the compiler tree API, which is how
+ * JavaBean {@code @ConfigurationProperties} classes declare defaults. Only constant-like expressions are
+ * understood; anything else is {@link #UNKNOWN}.
+ */
+final class Initializers {
+
+    /** No initializer. */
+    static final Object ABSENT = new Object();
+    /** An initializer that is not a constant docuconf understands. */
+    static final Object UNKNOWN = new Object();
+
+    private final Trees trees;
+
+    private Initializers(Trees trees) {
+        this.trees = trees;
+    }
+
+    /** Returns {@code null} when the compiler does not offer the tree API (for example, outside javac). */
+    static Initializers create(ProcessingEnvironment env) {
+        try {
+            return new Initializers(Trees.instance(env));
+        } catch (IllegalArgumentException | LinkageError e) {
+            return null;
+        }
+    }
+
+    Object of(VariableElement field) {
+        Tree t = trees.getTree(field);
+        if (!(t instanceof VariableTree vt)) {
+            return ABSENT;
+        }
+        ExpressionTree init = vt.getInitializer();
+        if (init == null) {
+            return ABSENT;
+        }
+        TreePath path = trees.getPath(field);
+        return eval(init, path == null ? null : path.getCompilationUnit());
+    }
+
+    private Object eval(ExpressionTree e, CompilationUnitTree unit) {
+        if (e instanceof ParenthesizedTree p) {
+            return eval(p.getExpression(), unit);
+        }
+        if (e instanceof TypeCastTree c) {
+            return eval(c.getExpression(), unit);
+        }
+        if (e instanceof LiteralTree l) {
+            return l.getValue() == null ? ABSENT : l.getValue();
+        }
+        if (e instanceof UnaryTree u && u.getKind() == Tree.Kind.UNARY_MINUS) {
+            Object v = eval(u.getExpression(), unit);
+            if (v instanceof Integer i) {
+                return -i;
+            }
+            if (v instanceof Long l) {
+                return -l;
+            }
+            if (v instanceof Double d) {
+                return -d;
+            }
+            if (v instanceof Float f) {
+                return -f;
+            }
+            return UNKNOWN;
+        }
+        if (e instanceof IdentifierTree || e instanceof MemberSelectTree) {
+            if (unit == null) {
+                return UNKNOWN;
+            }
+            TreePath p = TreePath.getPath(unit, e);
+            Element el = p == null ? null : trees.getElement(p);
+            if (el instanceof VariableElement ve) {
+                if (ve.getKind() == ElementKind.ENUM_CONSTANT) {
+                    return new EnumConstant(ve.getSimpleName().toString());
+                }
+                if (ve.getConstantValue() != null) {
+                    return ve.getConstantValue();
+                }
+            }
+            return UNKNOWN;
+        }
+        if (e instanceof NewClassTree n) {
+            String type = n.getIdentifier().toString().replaceAll("<.*>", "");
+            if (type.endsWith("ArrayList") || type.endsWith("LinkedList") || type.endsWith("HashSet")
+                    || type.endsWith("LinkedHashSet") || type.endsWith("TreeSet")) {
+                if (n.getArguments().isEmpty()) {
+                    return new ArrayList<>();
+                }
+                if (n.getArguments().size() == 1) {
+                    Object inner = eval(n.getArguments().get(0), unit);
+                    return inner instanceof List ? inner : UNKNOWN;
+                }
+            }
+            return UNKNOWN;
+        }
+        if (e instanceof MethodInvocationTree m) {
+            String select = m.getMethodSelect().toString();
+            String name = select.substring(select.lastIndexOf('.') + 1);
+            String owner = select.contains(".") ? select.substring(0, select.lastIndexOf('.')) : "";
+            owner = owner.substring(owner.lastIndexOf('.') + 1);
+            List<Object> args = new ArrayList<>();
+            for (ExpressionTree a : m.getArguments()) {
+                Object v = eval(a, unit);
+                if (v == UNKNOWN || v == ABSENT) {
+                    return UNKNOWN;
+                }
+                args.add(v);
+            }
+            switch (owner + "." + name) {
+                case "List.of", "Set.of", "Arrays.asList", "Collections.emptyList", "Collections.emptySet",
+                        "List.copyOf", "Set.copyOf" -> {
+                    if (args.size() == 1 && args.get(0) instanceof List<?> l) {
+                        return new ArrayList<>(l);
+                    }
+                    return args;
+                }
+                case "URI.create", "Path.of", "Paths.get", "String.valueOf" -> {
+                    return args.size() == 1 ? String.valueOf(args.get(0)) : UNKNOWN;
+                }
+                default -> {
+                }
+            }
+            if (owner.equals("Duration") && args.size() == 1 && args.get(0) instanceof Number num) {
+                long n = num.longValue();
+                return switch (name) {
+                    case "ofDays" -> Duration.ofDays(n);
+                    case "ofHours" -> Duration.ofHours(n);
+                    case "ofMinutes" -> Duration.ofMinutes(n);
+                    case "ofSeconds" -> Duration.ofSeconds(n);
+                    case "ofMillis" -> Duration.ofMillis(n);
+                    case "ofNanos" -> Duration.ofNanos(n);
+                    default -> UNKNOWN;
+                };
+            }
+            if (owner.equals("Duration") && name.equals("parse") && args.size() == 1) {
+                try {
+                    return Duration.parse(args.get(0).toString());
+                } catch (RuntimeException ex) {
+                    return UNKNOWN;
+                }
+            }
+            return UNKNOWN;
+        }
+        return UNKNOWN;
+    }
+
+    /** An enum constant reference. */
+    record EnumConstant(String name) {
+    }
+}
