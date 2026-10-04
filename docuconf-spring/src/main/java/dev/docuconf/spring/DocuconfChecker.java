@@ -95,6 +95,7 @@ public final class DocuconfChecker {
         this.validator = validator();
         ApplicationConversionService conversion = new ApplicationConversionService();
         conversion.addConverter(new DocuconfFileConverter(files));
+        conversion.addConverter(new DocuconfJsonConverter());
         List<ConversionService> services = List.of(conversion);
         this.binder = new Binder(ConfigurationPropertySources.get(environment),
                 new PropertySourcesPlaceholdersResolver(environment), services, null, null, null);

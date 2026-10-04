@@ -1,0 +1,3 @@
+gateway:
+  log-level: warn
+  trace-sampling: 0.01

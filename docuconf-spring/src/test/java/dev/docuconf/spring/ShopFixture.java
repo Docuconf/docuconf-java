@@ -12,6 +12,7 @@ import java.util.Map;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MutablePropertySources;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
@@ -65,10 +66,20 @@ final class ShopFixture {
 
     ConfigurableApplicationContext run(String... args) {
         return new SpringApplicationBuilder(ShopApp.class).web(WebApplicationType.NONE)
-                .initializers(ctx -> ctx.getEnvironment().getPropertySources().replace(
-                        StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
-                        new SystemEnvironmentPropertySource(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
-                                new HashMap<>(env))))
+                .environment(environment(env))
                 .logStartupInfo(false).run(args);
+    }
+
+    /** An environment whose variables are {@code env}, set before Spring Boot reads profiles and config files. */
+    static StandardEnvironment environment(Map<String, Object> env) {
+        Map<String, Object> copy = new HashMap<>(env);
+        return new StandardEnvironment() {
+            @Override
+            protected void customizePropertySources(MutablePropertySources sources) {
+                super.customizePropertySources(sources);
+                sources.replace(SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                        new SystemEnvironmentPropertySource(SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME, copy));
+            }
+        };
     }
 }

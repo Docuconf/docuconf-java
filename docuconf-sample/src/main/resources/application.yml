@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: gateway
+
+gateway:
+  log-level: info
+  allowed-origins: https://app.example.com
