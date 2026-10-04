@@ -1,0 +1,212 @@
+# docuconf for Java (Spring Boot)
+
+Typed configuration contracts for Spring Boot `@ConfigurationProperties`. Your properties classes, with the Bean
+Validation annotations you already use, become a CUE contract that your Kubernetes platform checks **before
+deploy**, and that your app checks again **at startup**. It covers environment variables, the
+`application*.yml` files in your jar, and file inputs: TLS key pairs, CA bundles, keystores, structured config
+files, licence files and binary data.
+
+Part of [docuconf](https://github.com/docuconf). See the
+[specification](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md).
+
+> **Status:** `0.1.0`, not yet published. The contract format is a draft (`v1alpha1`) and the API may change.
+> The Maven groupId `dev.docuconf` assumes the `docuconf.dev` domain; that namespace is **not yet verified** on
+> Maven Central (see [RELEASING.md](RELEASING.md)).
+
+| Artifact | What it is |
+|---|---|
+| `dev.docuconf:docuconf-core` | Annotations, file handles (`TlsKeyPair`, `CaBundle`, `Keystore`), contract model and file checks. JDK only. |
+| `dev.docuconf:docuconf-processor` | Annotation processor: writes `META-INF/docuconf/contract.cue` at compile time. |
+| `dev.docuconf:docuconf-spring` | Spring Boot auto-configuration: validates everything at startup. Spring Boot 3.x and 4.x, Java 17+. |
+
+## Install
+
+Maven:
+
+```xml
+<dependency>
+  <groupId>dev.docuconf</groupId>
+  <artifactId>docuconf-spring</artifactId>
+  <version>0.1.0</version>
+</dependency>
+
+<!-- in maven-compiler-plugin's <configuration> -->
+<annotationProcessorPaths>
+  <path>
+    <groupId>dev.docuconf</groupId>
+    <artifactId>docuconf-processor</artifactId>
+    <version>0.1.0</version>
+  </path>
+</annotationProcessorPaths>
+<compilerArgs>
+  <arg>-Adocuconf.appVersion=${project.version}</arg>
+</compilerArgs>
+```
+
+Gradle:
+
+```kotlin
+implementation("dev.docuconf:docuconf-spring:0.1.0")
+annotationProcessor("dev.docuconf:docuconf-processor:0.1.0")
+```
+
+Bean Validation needs a provider at runtime, as usual: `spring-boot-starter-validation`.
+
+## Declare
+
+Ordinary Spring Boot configuration properties, marked `@Docuconf`:
+
+```java
+/**
+ * Billing settings.
+ *
+ * @param databaseUrl Primary Postgres connection string
+ * @param port HTTP listen port
+ * @param timeout Upstream request timeout
+ * @param servingTls Certificate the API serves HTTPS with
+ * @param rates Pricing tiers by monthly volume
+ */
+@Docuconf(service = "billing-api")
+@Validated
+@ConfigurationProperties("billing")
+public record BillingProperties(
+        @NotNull @Secret @UrlSchemes({"postgres", "postgresql"}) URI databaseUrl,
+        @Min(1) @Max(65535) @DefaultValue("8080") int port,
+        @DurationMax(minutes = 5) @DefaultValue("30s") Duration timeout,
+        @NotNull @TlsFile(value = "/etc/billing/tls", dnsNames = "billing.internal", minRemaining = "720h",
+                reload = Reload.WATCH) TlsKeyPair servingTls,
+        @NotNull @ConfigFile("/etc/billing/rates/rates.yaml") Rates rates) {
+
+    /** @param tiers Tiers, cheapest last */
+    public record Rates(@NotEmpty List<Tier> tiers) {}
+
+    public record Tier(@Positive long upTo, @DecimalMin("0") BigDecimal price) {}
+}
+```
+
+Descriptions come from Javadoc (the field, the record's `@param`, or the getter); `@Description("...")` overrides
+it. Every input needs one of at least five characters. JavaBeans work too: field initializers are the defaults.
+
+| docuconf annotation | Input |
+|---|---|
+| `@Docuconf(service = ...)` | Marks the class. The service name may also come from `spring.application.name` in `application.yml`. |
+| `@Secret` | Must come from a Kubernetes Secret; no default anywhere; never printed. |
+| `@UrlSchemes({...})` | A `url` with allowed schemes (on `String`, `URI` or `URL`). |
+| `@Json` | One variable holding JSON, bound with Jackson; the contract carries a JSON Schema of the type. |
+| `@TlsFile(dir)` on `TlsKeyPair` | `tls.crt`, `tls.key` (PKCS#8, PKCS#1 or SEC1 PEM), optional `ca.crt`. Checked for key match, validity, `minRemaining`, `dnsNames` (SANs; a wildcard covers one label), `keyAlgorithms`, and the PKIX chain to `ca.crt` with `requireCA`. `sslContext()` and `keyStore()` build JSSE objects. |
+| `@ConfigFile(path)` on a class or record | JSON, YAML or TOML, read with Jackson into that type (unknown properties rejected) and validated with Bean Validation through the whole object graph. The contract carries a JSON Schema generated from the type. |
+| `@CaBundleFile(path)` on `CaBundle` | PEM CA certificates, at least `minCertificates`. |
+| `@KeystoreFile(path, passwordProperty = ...)` on `Keystore` | PKCS#12 or JKS; must open with the `@Secret` sibling property. |
+| `@TextFile(path, pattern = ...)` on `String` | Licence keys and the like; the property receives the content. |
+| `@BinaryFile(path)` on `Path` | Opaque bytes; size only. |
+| `@External("vault")` | Supplied by a source the platform does not control; left out. |
+| `@Group`, `@Examples` | Docs metadata. |
+
+Every file annotation takes `name`, `pathEnv`, `reload` (`RESTART` or `WATCH`) and `maxSize`. Mark the property
+`@NotNull` to make the input required.
+
+## What the contract says
+
+The processor writes `META-INF/docuconf/contract.cue` into your class output (so `target/classes/...` and the jar's
+`BOOT-INF/classes/...`), plus `contract.json`, which the runtime reads:
+
+```sh
+mvn compile && cp target/classes/META-INF/docuconf/contract.cue contract.cue
+unzip -p target/app.jar BOOT-INF/classes/META-INF/docuconf/contract.cue    # from a Boot jar
+```
+
+```cue
+BILLING_PORT: {
+	type: "int"
+	description: "HTTP listen port"
+	configKey: "billing.port"
+	min: 1
+	max: 65535
+	default: 8080
+}
+```
+
+How Java maps to the contract:
+
+| Java | Contract |
+|---|---|
+| Property `billing.database-url` | Variable `BILLING_DATABASEURL`, Spring's relaxed binding for environment variables (`configKey` keeps the property name). Nested classes add segments: `BILLING_DB_POOLSIZE`. |
+| `String`, `Path`, `Locale`, ... | `string`. `@Size` → `minLength`/`maxLength`; `@NotBlank` → required, `minLength: 1`, `pattern: "\\S"`. |
+| `@Pattern(regexp = "p")` | `pattern: "^(?:p)$"`: `@Pattern` matches the whole value, contract patterns match anywhere (SPEC §4.3). Patterns using Java-only regex features fail the build. |
+| `int`, `long`, `Integer`, ... | `int`, with `@Min`/`@Max`/`@Range`/`@Positive`... |
+| `double`, `BigDecimal`, ... | `float`, with inclusive `@DecimalMin`/`@DecimalMax`. Exclusive bounds (`@Positive`) have no contract form and are checked only at startup. |
+| `Duration` | `duration` with `encoding: "iso8601"`; `@DurationMin`/`@DurationMax` (Hibernate Validator) → `min`/`max`. Spring's simple format takes one unit (`90s`), so the canonical Go form `1m30s` would not parse; ISO-8601 (`PT1M30S`) does. |
+| `URI`, `URL`, or `@UrlSchemes` | `url` |
+| an `enum` | `enum` with the constant names (Spring also accepts them in any case). |
+| `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (Spring splits comma-separated values; `@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. |
+| `@NotNull`/`@NotBlank`/`@NotEmpty` without a default | `required: true` |
+| Field initializer, `@DefaultValue`, value in `application.yml` | `default` (the yml value wins, as in Spring); a required property with one becomes optional. |
+| Value in `application-{profile}.yml` (or a `spring.config.activate.on-profile` document) | `profiles.defaults.{profile}`, selected by `SPRING_PROFILES_ACTIVE`, which is added to the contract as a single profile name. |
+| `Map`, lists of objects | Not expressible in v1alpha1: left out with a warning (file-only). |
+
+The build fails on declaration errors: a missing description, a default that breaks its own constraint, a
+`@Secret` with a default or a value in any `application*.yml`, a non-RE2 pattern, two inputs mounted in one
+directory, a reserved mount directory such as `/etc/ssl/certs`. Names that look like feature flags (`ENABLE_*`)
+warn (SPEC §10).
+
+Processor options: `-Adocuconf.name=`, `-Adocuconf.appVersion=`, `-Adocuconf.resources=<dir with application.yml>`
+(the class output is used by default; with Gradle, `build/resources/main` or `src/main/resources` are tried).
+
+## Validate at startup
+
+Nothing to call: the auto-configuration checks every contract on the class path once the environment is complete
+and before any `@ConfigurationProperties` bean is bound. Values are read through Spring's own `Binder`, so relaxed
+names, profiles, `application.yml` and Spring's conversions apply exactly as for your beans. Startup fails with
+every problem at once:
+
+```
+***************************
+APPLICATION FAILED TO START
+***************************
+
+Description:
+
+The configuration does not satisfy the docuconf contract (5 problems):
+
+    [invalid_scheme] BILLING_DATABASEURL: must use one of the schemes postgres, postgresql
+    [invalid_type] BILLING_PORT: is not a valid integer (got "eighty")
+    [invalid_type] BILLING_TIMEOUT: is not a valid duration (ISO-8601 such as PT1M30S, or 90s) (got "1m30s")
+    [schema_mismatch] rates: /etc/billing/rates/rates.yaml: tiers[0].upTo: must be greater than 0
+    [certificate_expiring] serving-tls: the certificate expires at 2026-11-01T00:00:00Z, 239h59m58s from now; at least 720h must remain
+```
+
+- Codes are the SPEC §11.2 codes. Secret values never appear, not even a wrongly supplied URL's credentials.
+- The same lines go to `/dev/termination-log` (or `$DOCUCONF_TERMINATION_LOG`), so `kubectl describe pod` shows them.
+- An empty variable means unset for every type but `string` (SPEC §5): docuconf hides it from Spring, so
+  `@DefaultValue` and initializers apply.
+- Other Bean Validation constraints on the classes (`@Email`, custom ones) are reported in the same list.
+- `DOCUCONF_FILE_ROOT=./dev` reads `/etc/billing/tls` from `./dev/etc/billing/tls` (also for paths from `pathEnv`).
+- `docuconf.enabled=false` skips the check, for slice tests and build-time tasks.
+
+File inputs reach your properties object when it is bound. For `reload = WATCH` inputs, docuconf watches the mount
+directory (Kubernetes swaps a `..data` symlink there), re-checks the input after a change, and publishes it only
+if it passes; your bean keeps the startup value, so read the live one from `DocuconfFiles`:
+
+```java
+files.onChange("rates", value -> pricing.update((Rates) value));
+TlsKeyPair tls = props.servingTls();   // re-reads tls.crt / tls.key on each call
+```
+
+## Develop
+
+```sh
+mvn verify          # Java 17+; the cue CLI is used when present
+go install cuelang.org/go/cmd/cue@v0.17.1
+```
+
+Tests vet exported contracts with `cue vet -c` against the meta-schema at `$DOCUCONF_SPEC_CUE`, else
+`../docuconf-go/spec/cue`; they skip that step when cue or the meta-schema is missing, unless
+`DOCUCONF_REQUIRE_VET=1`. `docuconf-sample` is a gateway that uses every variable type and every file type; its
+exported contract is the golden file `docuconf-sample/src/test/resources/golden/contract.cue`
+(regenerate with `mvn test -pl docuconf-sample -am -Ddocuconf.updateGolden=true`). Certificates for tests are
+generated with Bouncy Castle (test scope only).
+
+Not done yet: Markdown docs generation, a contract-first loader for hand-written CUE, multi-profile activation
+(`SPRING_PROFILES_ACTIVE=prod,eu` is rejected by the contract; see SPEC §13 question 5).
+
+Licence: pending (Apache-2.0 proposed). There is no LICENSE file yet.

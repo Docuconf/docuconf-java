@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - java: "17"
+            spring-boot: "3.5.16"
+          - java: "21"
+            spring-boot: "3.5.16"
+          - java: "21"
+            spring-boot: "4.1.1"
+    name: Java ${{ matrix.java }}, Spring Boot ${{ matrix.spring-boot }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The contract meta-schema (spec/cue) lives in docuconf-go; the export tests vet contracts against it.
+      - uses: actions/checkout@v4
+        with:
+          repository: docuconf/docuconf-go
+          path: docuconf-go
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install cue
+        run: go install cuelang.org/go/cmd/cue@v0.17.1
+
+      - name: Build and test
+        run: mvn -B -ntp verify -Dspring-boot.version=${{ matrix.spring-boot }}
+        env:
+          DOCUCONF_SPEC_CUE: ${{ github.workspace }}/docuconf-go/spec/cue
+          DOCUCONF_REQUIRE_VET: "1"
+
+      - name: Check the release build (sources, javadoc) without signing
+        if: matrix.java == '21' && matrix.spring-boot == '3.5.16'
+        run: mvn -B -ntp -Prelease -DskipTests -Dgpg.skip package
