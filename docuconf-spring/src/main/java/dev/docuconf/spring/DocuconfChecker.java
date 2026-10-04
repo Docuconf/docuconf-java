@@ -310,6 +310,11 @@ public final class DocuconfChecker {
             }
             return out;
         }
+        if (v.secret && raw != null && raw.endsWith("\n")) {
+            // EDGE_CASES.md: a Secret created with --from-file usually carries the file's trailing newline.
+            warnings.add(v.name + " ends in a newline, which is part of the value (a Secret created with"
+                    + " kubectl --from-file?)");
+        }
         if (v.deprecated != null) {
             warnings.add(v.name + " is deprecated: " + v.deprecated.message()
                     + (v.deprecated.replacedBy() == null ? "" : "; use " + v.deprecated.replacedBy()));
