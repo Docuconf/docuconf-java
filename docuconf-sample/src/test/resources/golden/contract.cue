@@ -229,6 +229,15 @@ contract.#Contract & {
 			pathEnv: "SSL_CERT_FILE"
 		}
 	}
+	overlays: {
+		platform: {
+			description: "Platform overrides, layered over the application*.yml files"
+			format: "yaml"
+			path: "/etc/gateway/overlay/gateway.yaml"
+			keySeparator: "."
+			reload: "watch"
+		}
+	}
 	profiles: {
 		selector: "SPRING_PROFILES_ACTIVE"
 		default: "default"
