@@ -273,4 +273,6 @@ generated with Bouncy Castle (test scope only).
 Not done yet: Markdown docs generation, a contract-first loader for hand-written CUE, multi-profile activation
 (`SPRING_PROFILES_ACTIVE=prod,eu` is rejected by the contract; see SPEC §13 question 5).
 
-Licence: pending (Apache-2.0 proposed). There is no LICENSE file yet.
+## Licence
+
+MIT. See [LICENSE](LICENSE).

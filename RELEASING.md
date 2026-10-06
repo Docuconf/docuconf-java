@@ -7,21 +7,22 @@ Releases run from `.github/workflows/release.yml` when a `v*` tag is pushed. Not
 
 ## Before the first release
 
-1. **Licence.** Maven Central rejects a POM without `<licenses>`. Decide the licence (Apache-2.0 is proposed), add
-   `LICENSE`, and add the `<licenses>` block to the parent `pom.xml`.
-2. **Namespace.** The groupId `dev.docuconf` requires proving ownership of `docuconf.dev` on the
+The project is MIT-licensed (`LICENSE`, and the `<licenses>` block in the parent `pom.xml` that Maven Central
+requires).
+
+1. **Namespace.** The groupId `dev.docuconf` requires proving ownership of `docuconf.dev` on the
    [Central Portal](https://central.sonatype.com): add the namespace there and publish the DNS TXT record it gives
    you. The domain is **not yet verified**. If it cannot be, use `io.github.docuconf` (verified through the GitHub
    organisation) and change the groupId in every `pom.xml` and the README.
-3. **Portal token.** In the Central Portal, *View Account → Generate User Token*. This is the only credential
+2. **Portal token.** In the Central Portal, *View Account → Generate User Token*. This is the only credential
    Maven Central accepts; it has no OIDC trusted publishing, so the token is stored as a secret.
-4. **Signing key.** Central requires every file to be signed with a public GPG key:
+3. **Signing key.** Central requires every file to be signed with a public GPG key:
    ```sh
    gpg --quick-generate-key "docuconf releases <releases@docuconf.dev>" ed25519 sign 2y
    gpg --keyserver keys.openpgp.org --send-keys <KEYID>
    gpg --armor --export-secret-keys <KEYID>      # the value of MAVEN_GPG_PRIVATE_KEY
    ```
-5. **GitHub environment.** Create an environment named `maven-central` (Settings → Environments), restrict it to
+4. **GitHub environment.** Create an environment named `maven-central` (Settings → Environments), restrict it to
    `v*` tags and require a reviewer, and add these secrets to it:
 
    | Secret | Value |
