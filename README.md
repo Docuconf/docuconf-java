@@ -141,7 +141,7 @@ How Java maps to the contract:
 | `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (Spring splits comma-separated values; `@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. |
 | `@NotNull`/`@NotBlank`/`@NotEmpty` without a default | `required: true` |
 | Field initializer, `@DefaultValue`, value in `application.yml` | `default` (the yml value wins, as in Spring); a required property with one becomes optional. |
-| Value in `application-{profile}.yml` (or a `spring.config.activate.on-profile` document) | `profiles.defaults.{profile}`, selected by `SPRING_PROFILES_ACTIVE`, which is added to the contract as a single profile name. |
+| Value in `application-{profile}.yml` (or a `spring.config.activate.on-profile` document) | `profiles.defaults.{profile}`, selected by `SPRING_PROFILES_ACTIVE`, which is added to the contract as a single profile name defaulting to `profiles.default` (`spring.profiles.active` or `spring.profiles.default` from `application.yml`, else `default`). |
 | `Map`, lists of objects | Not expressible in v1alpha1: left out with a warning (file-only). |
 
 The build fails on declaration errors: a missing description, a default that breaks its own constraint, a
@@ -191,6 +191,70 @@ if it passes; your bean keeps the startup value, so read the live one from `Docu
 files.onChange("rates", value -> pricing.update((Rates) value));
 TlsKeyPair tls = props.servingTls();   // re-reads tls.crt / tls.key on each call
 ```
+
+## Platform overlays
+
+Spring layers config files, so the platform can supply settings in one more `application.yml`-style file it mounts
+(SPEC §4.7), instead of one environment variable each. Declare it on a `@Docuconf` class:
+
+```java
+@Docuconf
+@ConfigOverlay(value = "/etc/orders/overlay/orders.yaml", reload = Reload.WATCH)
+@Validated
+@ConfigurationProperties("orders")
+public class OrdersProperties { ... }
+```
+
+```cue
+overlays: platform: {
+	format:       "yaml"
+	path:         "/etc/orders/overlay/orders.yaml"
+	keySeparator: "."
+	reload:       "watch"
+}
+```
+
+The platform writes each value at its variable's `configKey` (`orders.checkout-timeout`), in native YAML types,
+with durations in ISO-8601. Nothing to call at runtime: an `EnvironmentPostProcessor` loads the file with Spring
+Boot's own YAML loader right after config data, as a property source just below `systemEnvironment`, so
+
+```
+application.yml < application-{profile}.yml < overlay < environment variables < system properties < command line
+```
+
+- A missing file is fine; a malformed one fails startup with `file_malformed` alongside the other problems.
+- Overlay values are checked like any other, by the same startup check.
+- `DOCUCONF_FILE_ROOT` applies to the overlay path too.
+- The path must end in `.yml` or `.yaml`, and its directory must be its own: the mount hides whatever the image has
+  there. The build rejects reserved directories (`/app`, `/etc`, ...) and directories shared with a file input; at
+  startup, docuconf refuses an overlay in the jar's directory or the working directory.
+- The overlay is not Spring config data, so it cannot activate profiles: set `SPRING_PROFILES_ACTIVE` in the
+  environment (docuconf warns if an overlay sets `spring.profiles.active`).
+
+`reload = Reload.WATCH`: Spring Boot has no reload of its own for `@ConfigurationProperties` (Spring Cloud's
+refresh scope is a separate project), so docuconf polls the file (every `docuconf.overlay-poll-interval`, default
+`5s`; polling sees the kubelet's symlink swap however it is done). When the content changes, it checks every
+variable against the environment as it would be with the new file. If anything fails, the change is logged and
+ignored. Otherwise it swaps the property source, binds a fresh instance of each `@Docuconf` JavaBean, copies it
+into the live bean (a key the platform removes falls back to its default) and publishes a
+`DocuconfOverlayReloadedEvent`. Read values from the bean when you need them, not once at startup; a reader on
+another thread may briefly see a mix of old and new values. Records and other constructor-bound classes are
+immutable and cannot be rebound, so the build rejects `WATCH` when one of them holds a non-secret variable (secrets
+never come from overlays). Use `RESTART` there: the platform renders an immutable ConfigMap and a change rolls the
+pods.
+
+## Injected secrets
+
+Values that an injector supplies when the container starts (Bank-Vaults `vault-env`, `op run`, vals, an operator)
+need nothing special: docuconf reads the environment the process starts with, after injection, and validates
+those values like any other. It never resolves references itself. If a secret still holds a reference at startup
+(it starts with `vault:`, `op://` or `ref+`), the injector did not run, and startup fails with:
+
+```
+[invalid_type] BILLING_DATABASEURL: holds an unresolved vault: reference; the injector that should resolve it did not run
+```
+
+The message names the scheme, never the reference itself.
 
 ## Develop
 
