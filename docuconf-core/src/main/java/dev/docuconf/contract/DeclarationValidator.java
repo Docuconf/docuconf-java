@@ -61,6 +61,9 @@ public final class DeclarationValidator {
         for (FileSpec f : c.files.values()) {
             file(c, f, mountDirs, pathEnvs);
         }
+        for (OverlaySpec o : c.overlays.values()) {
+            overlay(c, o, mountDirs);
+        }
         if (c.profiles != null) {
             profiles(c);
         }
@@ -240,6 +243,48 @@ public final class DeclarationValidator {
         }
         if (f.minCertificates != null && f.minCertificates < 1) {
             errors.add(n + ": minCertificates must be at least 1");
+        }
+    }
+
+    /** SPEC §4.7: the same mount rules as file inputs, in the host's own format and key syntax. */
+    private void overlay(Contract c, OverlaySpec o, Map<String, String> mountDirs) {
+        String n = "overlay " + o.name;
+        if (o.name == null || !Names.INPUT_NAME.matcher(o.name).matches()) {
+            errors.add(n + ": overlay names must be DNS labels of at most 42 characters, starting with a letter");
+        }
+        if (o.description != null) {
+            description(n, o.description);
+        }
+        if (!Set.of("json", "yaml", "toml").contains(o.format)) {
+            errors.add(n + ": format must be json, yaml or toml");
+        }
+        if (!".".equals(o.keySeparator) && !":".equals(o.keySeparator)) {
+            errors.add(n + ": keySeparator must be \".\" or \":\"");
+        }
+        if (!"restart".equals(o.reload) && !"watch".equals(o.reload)) {
+            errors.add(n + ": reload must be restart or watch");
+        }
+        if (o.path == null || !ABS_PATH.matcher(o.path).matches() || o.path.contains("//") || o.path.endsWith("/")
+                || o.path.matches(".*(^|/)\\.\\.?(/|$).*")) {
+            errors.add(n + ": path " + o.path + " must be absolute and normalised");
+            return;
+        }
+        String dir = parent(o.path);
+        if (RESERVED_DIRS.contains(dir)) {
+            errors.add(n + ": would be mounted at " + dir + ", which would hide what the image has there;"
+                    + " use a dedicated directory");
+        }
+        String other = mountDirs.putIfAbsent(dir, n);
+        if (other != null) {
+            errors.add(n + ": shares the mount directory " + dir + " with " + other
+                    + "; each input needs its own directory");
+        }
+        for (VarSpec v : c.vars.values()) {
+            if (!v.secret && v.configKey != null && v.configKey.split(java.util.regex.Pattern.quote(o.keySeparator),
+                    -1).length > 8) {
+                warnings.add(v.name + ": configKey " + v.configKey + " is nested more than 8 levels deep, so "
+                        + n + " cannot carry it; the platform must set it in the environment");
+            }
         }
     }
 

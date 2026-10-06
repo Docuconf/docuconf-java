@@ -3,7 +3,7 @@ package dev.docuconf.contract;
 import java.util.Map;
 import java.util.TreeMap;
 
-/** A configuration contract (SPEC §4): metadata, variables, file inputs and profiles. */
+/** A configuration contract (SPEC §4): metadata, variables, file inputs, overlays and profiles. */
 public final class Contract {
     /** The language id written to {@code metadata.generator.language}. */
     public static final String LANGUAGE = "java";
@@ -20,6 +20,8 @@ public final class Contract {
     public final Map<String, VarSpec> vars = new TreeMap<>();
     /** File inputs, sorted by name. */
     public final Map<String, FileSpec> files = new TreeMap<>();
+    /** Config-file overlays, sorted by name. */
+    public final Map<String, OverlaySpec> overlays = new TreeMap<>();
     /** Profiles, or {@code null}. */
     public Profiles profiles;
 }

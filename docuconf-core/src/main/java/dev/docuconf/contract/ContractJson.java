@@ -79,6 +79,19 @@ public final class ContractJson {
             }
             m.put("files", files);
         }
+        if (!c.overlays.isEmpty()) {
+            Map<String, Object> overlays = new LinkedHashMap<>();
+            for (OverlaySpec o : c.overlays.values()) {
+                Map<String, Object> om = new LinkedHashMap<>();
+                put(om, "description", o.description);
+                om.put("format", o.format);
+                om.put("path", o.path);
+                om.put("keySeparator", o.keySeparator);
+                om.put("reload", o.reload);
+                overlays.put(o.name, om);
+            }
+            m.put("overlays", overlays);
+        }
         if (c.profiles != null) {
             Map<String, Object> p = new LinkedHashMap<>();
             p.put("selector", c.profiles.selector);
@@ -303,6 +316,16 @@ public final class ContractJson {
             f.minLength = integer(fm.get("minLength"));
             f.maxLength = integer(fm.get("maxLength"));
             c.files.put(name, f);
+        });
+        Map<String, Object> overlays = (Map<String, Object>) m.getOrDefault("overlays", Map.of());
+        overlays.forEach((name, o) -> {
+            Map<String, Object> om = (Map<String, Object>) o;
+            OverlaySpec spec = new OverlaySpec(name, (String) om.get("path"));
+            spec.description = (String) om.get("description");
+            spec.format = (String) om.getOrDefault("format", spec.format);
+            spec.keySeparator = (String) om.getOrDefault("keySeparator", spec.keySeparator);
+            spec.reload = (String) om.getOrDefault("reload", "restart");
+            c.overlays.put(name, spec);
         });
         Map<String, Object> p = (Map<String, Object>) m.get("profiles");
         if (p != null) {

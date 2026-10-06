@@ -329,4 +329,92 @@ class DocuconfProcessorTest {
         CueVet.Result vet = CueVet.vet(c.contractCue(), tmp.resolve("vet"));
         assertEquals(0, vet.exitCode(), vet.output() + "\n" + c.contractCue());
     }
+
+    @Test
+    void overlaysAreExportedAndPassTheMetaSchema() throws Exception {
+        String source = BEAN.replace("@Docuconf\n", """
+                @Docuconf(service = "orders-api")
+                @ConfigOverlay(value = "/etc/orders/overlay/orders.yaml", reload = Reload.WATCH,
+                        description = "Platform overrides, layered over application.yml")
+                @ConfigOverlay(name = "tuning", value = "/etc/orders/tuning/tuning.yml")
+                """);
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.OrdersProperties", source));
+        Contract k = bundle(c).contract();
+        assertEquals(List.of("platform", "tuning"), List.copyOf(k.overlays.keySet()));
+        assertEquals("watch", k.overlays.get("platform").reload);
+        assertEquals("restart", k.overlays.get("tuning").reload);
+        assertTrue(c.contractCue().contains("""
+                	overlays: {
+                		platform: {
+                			description: "Platform overrides, layered over application.yml"
+                			format: "yaml"
+                			path: "/etc/orders/overlay/orders.yaml"
+                			keySeparator: "."
+                			reload: "watch"
+                		}
+                		tuning: {
+                			format: "yaml"
+                			path: "/etc/orders/tuning/tuning.yml"
+                			keySeparator: "."
+                		}
+                	}
+                """), c.contractCue());
+        // Every variable carries the key an overlay writes it at.
+        assertEquals("orders.checkout-timeout", k.vars.get("ORDERS_CHECKOUTTIMEOUT").configKey);
+        CueVet.Result vet = CueVet.vet(c.contractCue(), tmp.resolve("vet"));
+        assertEquals(0, vet.exitCode(), vet.output() + "\n" + c.contractCue());
+    }
+
+    @Test
+    void badOverlaysFailTheBuild() throws Exception {
+        String source = IMPORTS + """
+                /**
+                 * Settings.
+                 *
+                 * @param workers Worker count
+                 * @param token API token
+                 * @param rates Pricing tiers
+                 */
+                @Docuconf(service = "svc")
+                @ConfigOverlay(value = "/etc/svc/overlay/svc.json", reload = Reload.WATCH)
+                @ConfigOverlay(name = "Bad_Name", value = "/etc/svc/rates/overlay.yaml", description = "tiny")
+                @ConfigOverlay(name = "root", value = "/app/overlay.yaml")
+                @ConfigurationProperties("svc")
+                public record SvcProperties(@DefaultValue("1") int workers, @Secret String token,
+                        @ConfigFile("/etc/svc/rates/rates.yaml") Rates rates) {
+                    /** Tiers. */
+                    public record Rates(List<String> tiers) {}
+                }
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.SvcProperties", source));
+        assertFalse(c.success);
+        String errors = c.allErrors();
+        assertTrue(errors.contains("@ConfigOverlay(name = \"platform\"): path /etc/svc/overlay/svc.json must end in"
+                + " .yml or .yaml"), errors);
+        assertTrue(errors.contains("@ConfigOverlay(name = \"platform\", reload = WATCH): demo.SvcProperties is bound"
+                + " through its constructor"), errors);
+        assertTrue(errors.contains("overlay Bad_Name: overlay names must be DNS labels"), errors);
+        assertTrue(errors.contains("overlay Bad_Name: description \"tiny\" is shorter than 5 characters"), errors);
+        assertTrue(errors.contains("overlay Bad_Name: shares the mount directory /etc/svc/rates with rates"), errors);
+        assertTrue(errors.contains("overlay root: would be mounted at /app"), errors);
+        assertNull(c.contractCue());
+    }
+
+    @Test
+    void watchIsAllowedWhenARecordHoldsOnlySecretsAndFiles() throws Exception {
+        String source = IMPORTS + """
+                /**
+                 * Settings.
+                 *
+                 * @param token API token
+                 * @param license Licence key
+                 */
+                @Docuconf(service = "svc")
+                @ConfigOverlay(value = "/etc/svc/overlay/svc.yaml", reload = Reload.WATCH)
+                @ConfigurationProperties("svc")
+                public record SvcProperties(@Secret String token, @TextFile("/etc/svc/license/key") String license) {}
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.SvcProperties", source));
+        assertEquals("watch", bundle(c).contract().overlays.get("platform").reload);
+    }
 }
