@@ -2,6 +2,7 @@ package dev.docuconf.spring;
 
 import dev.docuconf.check.Code;
 import dev.docuconf.check.FileChecker;
+import dev.docuconf.check.InjectorReference;
 import dev.docuconf.check.VarChecker;
 import dev.docuconf.check.Violation;
 import dev.docuconf.contract.Bindings;
@@ -269,6 +270,12 @@ public final class DocuconfChecker {
             key = v.name;
         }
         String raw = rawValue(key);
+        // SPEC §11.2: a secret still holding vault:..., op://... or ref+... means its injector did not run.
+        Violation reference = InjectorReference.check(v, raw);
+        if (reference != null) {
+            out.add(reference);
+            return out;
+        }
         boolean empty = raw != null && raw.isEmpty();
         if (empty && v.type != VarType.STRING) {
             raw = null; // SPEC §5: empty means unset for every type but string.

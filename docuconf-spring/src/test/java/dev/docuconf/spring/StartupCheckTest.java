@@ -223,4 +223,41 @@ class StartupCheckTest {
             assertEquals("/v2", routes.routes().get(0).match());
         }
     }
+
+    @Test
+    void unresolvedInjectorReferencesAreReportedWithoutTheirValues() throws Exception {
+        String dbRef = "vault:secret/data/shop/db#url";
+        String ksRef = "op://platform/shop-keystore/password";
+        shop.env.put("SHOP_DATABASEURL", dbRef);
+        shop.env.put("SHOP_KEYSTOREPASSWORD", ksRef);
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("invalid_type SHOP_DATABASEURL", "invalid_type SHOP_KEYSTOREPASSWORD",
+                "keystore_unreadable partner"), codes(e));
+        String all = e.getMessage() + e.getViolations();
+        assertTrue(all.contains("[invalid_type] SHOP_DATABASEURL: holds an unresolved vault: reference; the injector"
+                + " that should resolve it did not run"), all);
+        assertTrue(all.contains("[invalid_type] SHOP_KEYSTOREPASSWORD: holds an unresolved op:// reference"), all);
+        assertFalse(all.contains("secret/data/shop"), all);
+        assertFalse(all.contains("shop-keystore"), all);
+
+        String log = Files.readString(tmp.resolve("termination-log"));
+        assertTrue(log.contains("[invalid_type] SHOP_DATABASEURL: holds an unresolved vault: reference"), log);
+        assertFalse(log.contains("secret/data/shop"), log);
+        assertFalse(log.contains("shop-keystore"), log);
+
+        shop.env.put("SHOP_DATABASEURL", "ref+vault://shop/db#url");
+        shop.env.put("SHOP_KEYSTOREPASSWORD", ShopFixture.KS_PASSWORD);
+        DocuconfValidationException vals = fails();
+        assertEquals(List.of("invalid_type SHOP_DATABASEURL"), codes(vals));
+        assertTrue(vals.getMessage().contains("holds an unresolved ref+ reference"), vals.getMessage());
+        assertFalse(vals.getMessage().contains("shop/db"), vals.getMessage());
+    }
+
+    @Test
+    void referencesInNonSecretVariablesAreLeftToTheirConstraints() {
+        shop.env.put("SHOP_CONTACT", "vault:ops");
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("invalid_type SHOP_CONTACT"), codes(e));
+        assertTrue(e.getMessage().contains("(@Email)"), e.getMessage());
+    }
 }
