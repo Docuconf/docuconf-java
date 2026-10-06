@@ -25,6 +25,16 @@ public final class CueVet {
     }
 
     public static Result vet(String contractCue, Path work) throws IOException, InterruptedException {
+        module(contractCue, work);
+        return cue(work, "vet", "-c", "./svc");
+    }
+
+    /**
+     * Sets up a CUE module in {@code work}: the meta-schema as {@code docuconf.dev/contract} and the contract as
+     * package {@code docuconf.dev/svc}. Aborts the test when cue or the meta-schema is missing, unless
+     * {@code DOCUCONF_REQUIRE_VET=1}.
+     */
+    public static void module(String contractCue, Path work) throws IOException {
         Path cue = cueBinary();
         Path spec = specDir();
         boolean require = "1".equals(System.getenv("DOCUCONF_REQUIRE_VET"));
@@ -38,8 +48,14 @@ public final class CueVet {
         copy(spec.resolve("contract"), work.resolve("contract"));
         Files.createDirectories(work.resolve("svc"));
         Files.writeString(work.resolve("svc/contract.cue"), contractCue);
-        Process p = new ProcessBuilder(cue.toString(), "vet", "-c", "./svc").directory(work.toFile())
-                .redirectErrorStream(true).start();
+    }
+
+    /** Runs cue with {@code args} in a module made by {@link #module(String, Path)}. */
+    public static Result cue(Path work, String... args) throws IOException, InterruptedException {
+        java.util.List<String> command = new java.util.ArrayList<>();
+        command.add(cueBinary().toString());
+        command.addAll(java.util.List.of(args));
+        Process p = new ProcessBuilder(command).directory(work.toFile()).redirectErrorStream(true).start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         return new Result(p.waitFor(), out);
     }

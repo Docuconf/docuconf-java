@@ -3,10 +3,12 @@ package dev.docuconf.sample;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.docuconf.TlsKeyPair;
+import dev.docuconf.spring.DocuconfOverlayReloadedEvent;
 import dev.docuconf.spring.DocuconfValidationException;
 import dev.docuconf.testing.TestCerts;
 import java.io.IOException;
@@ -17,12 +19,16 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.context.ApplicationListener;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.MutablePropertySources;
 import org.springframework.core.env.StandardEnvironment;
@@ -67,10 +73,51 @@ class GatewayBootTest {
         }
     }
 
-    private ConfigurableApplicationContext run() {
+    /** Replaces a file atomically, as the kubelet does when a ConfigMap changes. */
+    private void swap(String relative, String content) throws IOException {
+        Path p = root.resolve(relative);
+        Files.createDirectories(p.getParent());
+        Path tmp = Files.writeString(p.resolveSibling(".tmp-" + p.getFileName()), content);
+        Files.move(tmp, p, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    private ConfigurableApplicationContext run(String... args) {
         return new SpringApplicationBuilder(GatewayApplication.class).web(WebApplicationType.NONE)
                 .environment(environment(env))
-                .run();
+                .run(args);
+    }
+
+    @Test
+    void aWatchedOverlayIsReloadedAndRebound() throws Exception {
+        swap("etc/gateway/overlay/gateway.yaml", "gateway:\n  port: 9443\n  log-level: ERROR\n");
+        try (ConfigurableApplicationContext ctx = run("--docuconf.overlay-poll-interval=100ms")) {
+            GatewayProperties p = ctx.getBean(GatewayProperties.class);
+            assertEquals(9443, p.getPort());
+            assertEquals(GatewayProperties.LogLevel.ERROR, p.getLogLevel());
+            BlockingQueue<String> reloads = new LinkedBlockingQueue<>();
+            ctx.addApplicationListener((ApplicationListener<DocuconfOverlayReloadedEvent>) e ->
+                    reloads.add(e.getOverlay()));
+
+            // An invalid update is refused as a whole: the app keeps the last good values.
+            swap("etc/gateway/overlay/gateway.yaml", "gateway:\n  port: 70000\n  log-level: WARN\n");
+            assertNull(reloads.poll(1500, TimeUnit.MILLISECONDS));
+            assertEquals(9443, p.getPort());
+            assertEquals(GatewayProperties.LogLevel.ERROR, p.getLogLevel());
+
+            // A valid one is rebound into the same bean; a key the overlay drops falls back to the files.
+            swap("etc/gateway/overlay/gateway.yaml", "gateway:\n  port: 9444\n  admin:\n    api-key: ignored\n");
+            assertEquals("platform", reloads.poll(20, TimeUnit.SECONDS));
+            assertEquals(9444, p.getPort());
+            assertEquals(GatewayProperties.LogLevel.INFO, p.getLogLevel(), "application.yml again");
+            assertEquals("admin-secret", p.getAdmin().getApiKey(), "the environment still wins");
+            assertEquals(9444, ctx.getEnvironment().getProperty("gateway.port", Integer.class));
+
+            // Removing the file removes the overlay.
+            Files.delete(root.resolve("etc/gateway/overlay/gateway.yaml"));
+            assertEquals("platform", reloads.poll(20, TimeUnit.SECONDS));
+            assertEquals(8443, p.getPort());
+        }
     }
 
     @Test

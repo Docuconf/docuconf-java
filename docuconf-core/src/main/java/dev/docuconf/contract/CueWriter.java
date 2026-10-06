@@ -74,6 +74,21 @@ public final class CueWriter {
             }
             close();
         }
+        if (!c.overlays.isEmpty()) {
+            open("overlays");
+            for (OverlaySpec o : c.overlays.values()) {
+                open(label(o.name));
+                opt("description", o.description);
+                field("format", o.format);
+                field("path", o.path);
+                field("keySeparator", o.keySeparator);
+                if (!"restart".equals(o.reload)) {
+                    field("reload", o.reload);
+                }
+                close();
+            }
+            close();
+        }
         if (c.profiles != null) {
             open("profiles");
             field("selector", c.profiles.selector);

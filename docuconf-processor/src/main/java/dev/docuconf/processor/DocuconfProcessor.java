@@ -11,6 +11,7 @@ import dev.docuconf.contract.FileSpec;
 import dev.docuconf.contract.FileType;
 import dev.docuconf.contract.GoDuration;
 import dev.docuconf.contract.Names;
+import dev.docuconf.contract.OverlaySpec;
 import dev.docuconf.contract.Profiles;
 import dev.docuconf.contract.VarSpec;
 import dev.docuconf.contract.VarType;
@@ -94,6 +95,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
     /** Variables waiting for application*.yml values, which are read once at the end. */
     private final List<PendingVar> pending = new ArrayList<>();
     private final List<PendingPassword> passwords = new ArrayList<>();
+    /** Root classes bound through a constructor (records, @ConstructorBinding), which cannot be rebound in place. */
+    private final Map<String, TypeElement> constructorBound = new LinkedHashMap<>();
+    private final Map<String, Element> overlayElements = new LinkedHashMap<>();
     private boolean failed;
 
     @Override
@@ -167,7 +171,53 @@ public final class DocuconfProcessor extends AbstractProcessor {
         String className = elements.getBinaryName(te).toString();
         classNames.add(className);
         bindings.classes.add(new Bindings.ClassBinding(className, prefix));
+        if (te.getKind() == ElementKind.RECORD || bindConstructor(te) != null) {
+            constructorBound.put(className, te);
+        }
+        overlays(te);
         walk(className, te, prefix, "", groupOf(te, null), 0);
+    }
+
+    /** Reads {@code @ConfigOverlay}, single or repeated (SPEC §4.7). */
+    private void overlays(TypeElement te) {
+        List<AnnotationMirror> found = new ArrayList<>();
+        AnnotationMirror single = annotation(te, D + "ConfigOverlay");
+        if (single != null) {
+            found.add(single);
+        }
+        AnnotationMirror container = annotation(te, D + "ConfigOverlays");
+        if (container != null && Mirrors.rawValue(container, "value") instanceof List<?> l) {
+            for (Object o : l) {
+                found.add((AnnotationMirror) ((javax.lang.model.element.AnnotationValue) o).getValue());
+            }
+        }
+        for (AnnotationMirror m : found) {
+            String name = Mirrors.string(elements, m, "name");
+            String path = Mirrors.string(elements, m, "value");
+            OverlaySpec o = new OverlaySpec(name, path);
+            String description = Mirrors.string(elements, m, "description");
+            o.description = description == null || description.isEmpty() ? null : description;
+            o.reload = Mirrors.string(elements, m, "reload").toLowerCase(Locale.ROOT);
+            // Spring reads application.yml-style files with its own YAML loader (YamlPropertySourceLoader), and
+            // binds keys separated by dots in relaxed form: orders.checkout-timeout.
+            o.format = "yaml";
+            o.keySeparator = ".";
+            String lower = path == null ? "" : path.toLowerCase(Locale.ROOT);
+            if (!lower.endsWith(".yml") && !lower.endsWith(".yaml")) {
+                error(te, "@ConfigOverlay(name = \"" + name + "\"): path " + path + " must end in .yml or .yaml;"
+                        + " Spring overlays are read with its YAML loader");
+            }
+            OverlaySpec other = contract.overlays.get(name);
+            if (other != null) {
+                if (!other.path.equals(o.path) || !other.reload.equals(o.reload)
+                        || !java.util.Objects.equals(other.description, o.description)) {
+                    error(te, "@ConfigOverlay(name = \"" + name + "\") is declared twice, differently");
+                }
+                continue;
+            }
+            contract.overlays.put(name, o);
+            overlayElements.put(name, te);
+        }
     }
 
     /** A property as Spring's binder sees it. */
@@ -763,6 +813,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
             pp.spec().passwordVar = Names.envName(pp.configKey());
         }
         profiles(files);
+        watchableOverlays();
 
         DeclarationValidator.Result result = DeclarationValidator.validate(contract);
         for (String w : result.warnings()) {
@@ -872,12 +923,35 @@ public final class DocuconfProcessor extends AbstractProcessor {
             // two files the contract cannot describe.
             s.pattern = "^[^,]+$";
             s.configKey = "spring.profiles.active";
-            if (active != null) {
-                s.defaultValue = active.value().toString();
-            }
+            // SPEC §4.4: the added selector defaults to profiles.default, the profile in effect when it is unset.
+            s.defaultValue = profiles.defaultProfile;
             contract.vars.put(selector, s);
         }
         contract.profiles = profiles;
+    }
+
+    /**
+     * SPEC §11.2 item 8: only claim {@code watch} where it is kept. docuconf-spring rebinds JavaBeans in place when
+     * a watched overlay changes; a class bound through its constructor is immutable, so any variable it holds that
+     * an overlay could carry (every non-secret one) would silently keep its old value.
+     */
+    private void watchableOverlays() {
+        for (OverlaySpec o : contract.overlays.values()) {
+            if (!"watch".equals(o.reload)) {
+                continue;
+            }
+            Set<String> reported = new TreeSet<>();
+            bindings.vars.forEach((name, b) -> {
+                VarSpec v = contract.vars.get(name);
+                TypeElement te = constructorBound.get(b.className());
+                if (te != null && v != null && !v.secret && reported.add(b.className())) {
+                    error(overlayElements.get(o.name), "@ConfigOverlay(name = \"" + o.name + "\", reload = WATCH):"
+                            + " " + te.getQualifiedName() + " is bound through its constructor (a record or"
+                            + " @ConstructorBinding), so its values cannot be rebound when the overlay changes;"
+                            + " make it a JavaBean with setters, or use Reload.RESTART");
+                }
+            });
+        }
     }
 
     private static SpringFiles.Value lookup(Map<String, SpringFiles.Value> values, String configKey) {

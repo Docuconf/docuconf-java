@@ -2,6 +2,7 @@ package dev.docuconf.spring;
 
 import dev.docuconf.check.Code;
 import dev.docuconf.check.FileChecker;
+import dev.docuconf.check.InjectorReference;
 import dev.docuconf.check.VarChecker;
 import dev.docuconf.check.Violation;
 import dev.docuconf.contract.Bindings;
@@ -74,6 +75,7 @@ public final class DocuconfChecker {
     private final Clock clock;
     private final DocuconfFiles files;
     private final Validator validator;
+    private final List<ConversionService> conversion;
     private final Binder binder;
     private final List<String> warnings = new ArrayList<>();
 
@@ -96,9 +98,23 @@ public final class DocuconfChecker {
         ApplicationConversionService conversion = new ApplicationConversionService();
         conversion.addConverter(new DocuconfFileConverter(files));
         conversion.addConverter(new DocuconfJsonConverter());
-        List<ConversionService> services = List.of(conversion);
-        this.binder = new Binder(ConfigurationPropertySources.get(environment),
-                new PropertySourcesPlaceholdersResolver(environment), services, null, null, null);
+        this.conversion = List.of(conversion);
+        this.binder = binder(environment);
+    }
+
+    private Binder binder(ConfigurableEnvironment env) {
+        return new Binder(ConfigurationPropertySources.get(env), new PropertySourcesPlaceholdersResolver(env),
+                conversion, null, null, null);
+    }
+
+    /** The contracts being checked. */
+    List<ContractBundle> bundles() {
+        return bundles;
+    }
+
+    /** A binder over the live environment, with docuconf's converters. */
+    Binder binder() {
+        return binder;
     }
 
     /**
@@ -150,18 +166,9 @@ public final class DocuconfChecker {
      */
     public List<Violation> check() {
         hideEmptyValues();
-        List<Violation> out = new ArrayList<>();
+        List<Violation> out = new ArrayList<>(overlayProblems());
         Set<String> failed = new HashSet<>();
-        for (ContractBundle bundle : bundles) {
-            for (VarSpec v : bundle.contract().vars.values()) {
-                Bindings.PropertyBinding b = bundle.bindings().vars.get(v.name);
-                List<Violation> found = checkVar(v, b);
-                if (!found.isEmpty()) {
-                    failed.add(v.name);
-                    out.addAll(found);
-                }
-            }
-        }
+        out.addAll(checkVars(binder, failed));
         Map<String, Object> markers = new LinkedHashMap<>();
         for (ContractBundle bundle : bundles) {
             for (FileSpec f : bundle.contract().files.values()) {
@@ -182,7 +189,68 @@ public final class DocuconfChecker {
         environment.getPropertySources().addFirst(new MapPropertySource(PROPERTY_SOURCE, markers));
         if (validator != null) {
             for (ContractBundle bundle : bundles) {
-                out.addAll(beanValidation(bundle, failed));
+                out.addAll(beanValidation(bundle, failed, binder));
+            }
+        }
+        return out;
+    }
+
+    private List<Violation> checkVars(Binder binder, Set<String> failed) {
+        List<Violation> out = new ArrayList<>();
+        for (ContractBundle bundle : bundles) {
+            for (VarSpec v : bundle.contract().vars.values()) {
+                Bindings.PropertyBinding b = bundle.bindings().vars.get(v.name);
+                List<Violation> found = checkVar(v, b, binder);
+                if (!found.isEmpty()) {
+                    failed.add(v.name);
+                    out.addAll(found);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Checks the variables again against a candidate environment, such as the live one with a changed overlay,
+     * without touching the file inputs (which keep their current values).
+     *
+     * @param candidate the environment to check
+     * @return every violation, empty when the candidate is valid
+     */
+    List<Violation> recheckVars(ConfigurableEnvironment candidate) {
+        Binder b = binder(candidate);
+        Set<String> failed = new HashSet<>();
+        List<Violation> out = new ArrayList<>(checkVars(b, failed));
+        if (validator != null) {
+            for (ContractBundle bundle : bundles) {
+                out.addAll(beanValidation(bundle, failed, b));
+            }
+        }
+        return out;
+    }
+
+    /** Overlays that could not be read, and values an overlay must not carry (SPEC §4.7). */
+    private List<Violation> overlayProblems() {
+        List<Violation> out = new ArrayList<>();
+        for (PropertySource<?> ps : environment.getPropertySources()) {
+            if (!(ps instanceof DocuconfOverlaySource overlay)) {
+                continue;
+            }
+            if (overlay.error() != null) {
+                out.add(new Violation(Code.FILE_MALFORMED, overlay.spec().name,
+                        "overlay " + overlay.path() + " " + overlay.error()));
+            }
+            for (ContractBundle bundle : bundles) {
+                for (VarSpec v : bundle.contract().vars.values()) {
+                    if (v.secret && v.configKey != null && overlay.containsProperty(v.configKey)) {
+                        warnings.add(v.name + " is secret, but overlay " + overlay.spec().name + " sets "
+                                + v.configKey + "; overlays are ConfigMaps, so supply it from a Secret");
+                    }
+                }
+            }
+            if (overlay.containsProperty("spring.profiles.active")) {
+                warnings.add("overlay " + overlay.spec().name + " sets spring.profiles.active, which Spring reads"
+                        + " before overlays are loaded; set SPRING_PROFILES_ACTIVE in the environment instead");
             }
         }
         return out;
@@ -262,13 +330,19 @@ public final class DocuconfChecker {
     // -------------------------------------------------------------------------------------------------------------
     // Variables
 
-    private List<Violation> checkVar(VarSpec v, Bindings.PropertyBinding b) {
+    private List<Violation> checkVar(VarSpec v, Bindings.PropertyBinding b, Binder binder) {
         List<Violation> out = new ArrayList<>();
         String key = b != null ? b.configKey() : v.configKey;
         if (key == null) {
             key = v.name;
         }
-        String raw = rawValue(key);
+        String raw = rawValue(key, binder);
+        // SPEC §11.2: a secret still holding vault:..., op://... or ref+... means its injector did not run.
+        Violation reference = InjectorReference.check(v, raw);
+        if (reference != null) {
+            out.add(reference);
+            return out;
+        }
         boolean empty = raw != null && raw.isEmpty();
         if (empty && v.type != VarType.STRING) {
             raw = null; // SPEC §5: empty means unset for every type but string.
@@ -277,7 +351,7 @@ public final class DocuconfChecker {
         if (empty && v.type != VarType.STRING) {
             typed = null;
         } else if (v.type == VarType.JSON) {
-            typed = raw == null ? null : json(v, b, raw, out);
+            typed = raw == null ? nestedJson(v, b, key, binder, out) : json(v, b, raw, out);
             if (!out.isEmpty()) {
                 return out;
             }
@@ -350,7 +424,35 @@ public final class DocuconfChecker {
         }
     }
 
-    private String rawValue(String key) {
+    /** A json variable given as nested keys, as an overlay or application.yml writes it, rather than one string. */
+    private Object nestedJson(VarSpec v, Bindings.PropertyBinding b, String key, Binder binder, List<Violation> out) {
+        if (b == null) {
+            return null;
+        }
+        Class<?> type = load(b.javaType());
+        Capture capture = new Capture();
+        Object value;
+        try {
+            BindResult<?> r = binder.bind(key, Bindable.of(type), capture);
+            value = r.isBound() ? r.get() : null;
+        } catch (RuntimeException e) {
+            capture.error = e;
+            value = null;
+        }
+        if (capture.error != null) {
+            out.add(new Violation(Code.INVALID_TYPE, v.name, "is not an object that fits " + type.getSimpleName()));
+            return null;
+        }
+        if (value != null && validator != null) {
+            for (GraphValidator.Problem p : GraphValidator.validate(validator, value)) {
+                out.add(new Violation(Code.SCHEMA_MISMATCH, v.name, p.path() + ": "
+                        + (v.secret ? "fails @" + p.constraint() : p.message())));
+            }
+        }
+        return value;
+    }
+
+    private String rawValue(String key, Binder binder) {
         try {
             BindResult<String> r = binder.bind(key, Bindable.of(String.class), new Capture());
             return r.isBound() ? r.get() : null;
@@ -437,7 +539,7 @@ public final class DocuconfChecker {
     // -------------------------------------------------------------------------------------------------------------
     // Bean Validation of the bound classes
 
-    private List<Violation> beanValidation(ContractBundle bundle, Set<String> failed) {
+    private List<Violation> beanValidation(ContractBundle bundle, Set<String> failed, Binder binder) {
         List<Violation> out = new ArrayList<>();
         for (Bindings.ClassBinding cb : bundle.bindings().classes) {
             Map<String, String> inputsByPath = new LinkedHashMap<>();
@@ -522,7 +624,7 @@ public final class DocuconfChecker {
         for (ContractBundle bundle : bundles) {
             Bindings.PropertyBinding b = bundle.bindings().vars.get(name);
             if (b != null) {
-                String raw = rawValue(b.configKey());
+                String raw = rawValue(b.configKey(), binder);
                 if (raw != null) {
                     return raw;
                 }

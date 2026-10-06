@@ -140,6 +140,7 @@ contract.#Contract & {
 			description: "Active Spring profile; selects the application-{profile}.yml baked into the image"
 			configKey: "spring.profiles.active"
 			pattern: "^[^,]+$"
+			default: "default"
 		}
 	}
 	files: {
@@ -226,6 +227,15 @@ contract.#Contract & {
 			description: "Private CAs the gateway trusts for upstream TLS"
 			path: "/etc/gateway/ca/bundle.pem"
 			pathEnv: "SSL_CERT_FILE"
+		}
+	}
+	overlays: {
+		platform: {
+			description: "Platform overrides, layered over the application*.yml files"
+			format: "yaml"
+			path: "/etc/gateway/overlay/gateway.yaml"
+			keySeparator: "."
+			reload: "watch"
 		}
 	}
 	profiles: {

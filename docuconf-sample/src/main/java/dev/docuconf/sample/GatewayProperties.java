@@ -1,9 +1,11 @@
 package dev.docuconf.sample;
 
+import dev.docuconf.ConfigOverlay;
 import dev.docuconf.Docuconf;
 import dev.docuconf.Examples;
 import dev.docuconf.Group;
 import dev.docuconf.Json;
+import dev.docuconf.Reload;
 import dev.docuconf.Secret;
 import dev.docuconf.UrlSchemes;
 import jakarta.validation.constraints.DecimalMax;
@@ -22,8 +24,13 @@ import org.hibernate.validator.constraints.time.DurationMin;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
-/** Gateway settings, as a JavaBean: defaults are field initializers and application.yml values. */
+/**
+ * Gateway settings, as a JavaBean: defaults are field initializers and application.yml values. The platform may
+ * override them in a mounted overlay, which the gateway reloads without a restart.
+ */
 @Docuconf
+@ConfigOverlay(value = "/etc/gateway/overlay/gateway.yaml", reload = Reload.WATCH,
+        description = "Platform overrides, layered over the application*.yml files")
 @Validated
 @ConfigurationProperties("gateway")
 public class GatewayProperties {

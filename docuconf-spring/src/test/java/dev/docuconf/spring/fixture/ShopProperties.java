@@ -4,6 +4,7 @@ import dev.docuconf.CaBundle;
 import dev.docuconf.CaBundleFile;
 import dev.docuconf.BinaryFile;
 import dev.docuconf.ConfigFile;
+import dev.docuconf.ConfigOverlay;
 import dev.docuconf.Docuconf;
 import dev.docuconf.Json;
 import dev.docuconf.KeyAlgorithm;
@@ -51,6 +52,7 @@ import org.springframework.validation.annotation.Validated;
  * @param geo GeoIP database
  */
 @Docuconf(service = "shop")
+@ConfigOverlay(value = "/etc/shop/overlay/shop.yaml", description = "Platform overrides, layered over application.yml")
 @Validated
 @ConfigurationProperties("shop")
 public record ShopProperties(
