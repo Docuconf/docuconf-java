@@ -240,6 +240,8 @@ class DocuconfProcessorTest {
 
         assertEquals("SPRING_PROFILES_ACTIVE", k.profiles.selector);
         assertEquals("default", k.profiles.defaultProfile);
+        // SPEC §4.4: the selector the SDK adds defaults to profiles.default.
+        assertEquals("default", k.vars.get("SPRING_PROFILES_ACTIVE").defaultValue);
         assertEquals(Map.of("ORDERS_MAXITEMS", 80L, "ORDERS_QUEUES", List.of("orders", "refunds", "audit")),
                 k.profiles.defaults.get("prod"));
         assertEquals(Map.of("ORDERS_DB_POOLSIZE", 2L), k.profiles.defaults.get("staging"));
@@ -300,5 +302,31 @@ class DocuconfProcessorTest {
         assertTrue(c.success, c.allErrors());
         assertTrue(c.warnings.stream().anyMatch(w -> w.contains("ENABLE_CHECKOUT: looks like a feature flag")),
                 c.warnings.toString());
+    }
+
+    @Test
+    void profileSelectorDefaultsToTheDefaultProfile() throws Exception {
+        String source = IMPORTS + """
+                @Docuconf(service = "svc")
+                @ConfigurationProperties("svc")
+                public record SvcProperties(@Description("Worker count") @DefaultValue("1") int workers) {}
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(
+                "application.yml", "spring.profiles.default: prod\n",
+                "application-prod.yml", "svc.workers: 4\n"), Map.of("demo.SvcProperties", source));
+        Contract k = bundle(c).contract();
+        assertEquals("prod", k.profiles.defaultProfile);
+        assertEquals("prod", k.vars.get("SPRING_PROFILES_ACTIVE").defaultValue);
+        assertTrue(c.contractCue().contains("""
+                		SPRING_PROFILES_ACTIVE: {
+                			type: "string"
+                			description: "Active Spring profile; selects the application-{profile}.yml baked into the image"
+                			configKey: "spring.profiles.active"
+                			pattern: "^[^,]+$"
+                			default: "prod"
+                		}
+                """), c.contractCue());
+        CueVet.Result vet = CueVet.vet(c.contractCue(), tmp.resolve("vet"));
+        assertEquals(0, vet.exitCode(), vet.output() + "\n" + c.contractCue());
     }
 }

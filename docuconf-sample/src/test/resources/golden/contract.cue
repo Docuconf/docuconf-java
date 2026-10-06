@@ -140,6 +140,7 @@ contract.#Contract & {
 			description: "Active Spring profile; selects the application-{profile}.yml baked into the image"
 			configKey: "spring.profiles.active"
 			pattern: "^[^,]+$"
+			default: "default"
 		}
 	}
 	files: {

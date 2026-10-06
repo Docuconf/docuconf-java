@@ -872,9 +872,8 @@ public final class DocuconfProcessor extends AbstractProcessor {
             // two files the contract cannot describe.
             s.pattern = "^[^,]+$";
             s.configKey = "spring.profiles.active";
-            if (active != null) {
-                s.defaultValue = active.value().toString();
-            }
+            // SPEC §4.4: the added selector defaults to profiles.default, the profile in effect when it is unset.
+            s.defaultValue = profiles.defaultProfile;
             contract.vars.put(selector, s);
         }
         contract.profiles = profiles;
