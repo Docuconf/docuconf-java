@@ -113,6 +113,14 @@ class ContractCoreTest {
         tags.separator = ";";
         tags.defaultValue = List.of("a$b", "c");
         c.vars.put(tags.name, tags);
+        VarSpec shards = new VarSpec("DEMO_SHARDS", VarType.LIST, "Shard ids this instance owns");
+        shards.items = "int";
+        shards.encoding = "csv";
+        shards.separator = ",";
+        shards.itemMin = 0L;
+        shards.itemMax = 1023L;
+        shards.defaultValue = List.of(0L, 1L);
+        c.vars.put(shards.name, shards);
         VarSpec limits = new VarSpec("DEMO_LIMITS", VarType.JSON, "Rate limits per client");
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", "object");
@@ -158,6 +166,10 @@ class ContractCoreTest {
         Map<String, Object> tags = (Map<String, Object>) ((Map<String, Object>) e.get("vars")).get("DEMO_TAGS");
         assertEquals(List.of("a$b", "c"), tags.get("default"));
         assertEquals("Tags \"quoted\" with \\(interpolation)", tags.get("description"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> shards = (Map<String, Object>) ((Map<String, Object>) e.get("vars")).get("DEMO_SHARDS");
+        assertEquals(0L, shards.get("itemMin"));
+        assertEquals(1023L, shards.get("itemMax"));
     }
 
     @Test
@@ -177,6 +189,8 @@ class ContractCoreTest {
     void declarationErrors() {
         Contract c = sample();
         c.vars.get("DEMO_PORT").defaultValue = 70000L;
+        c.vars.get("DEMO_SHARDS").defaultValue = List.of(0L, 1024L);
+        c.vars.get("DEMO_TAGS").itemMax = 3L;
         c.vars.get("DEMO_DATABASEURL").defaultValue = "postgres://x";
         VarSpec bad = new VarSpec("bad_name", VarType.STRING, "tiny");
         bad.pattern = "(?=x)";
@@ -203,6 +217,8 @@ class ContractCoreTest {
         assertTrue(all.contains("DEMO_DATABASEURL: a secret cannot have a value in a profile file"), all);
         assertTrue(all.contains("DEMO_RATIO: value in profile prod is above max 1"), all);
         assertTrue(all.contains("profiles.prod: NOPE is not a declared variable"), all);
+        assertTrue(all.contains("DEMO_SHARDS: default item 1 is above itemMax 1023"), all);
+        assertTrue(all.contains("DEMO_TAGS: itemMin and itemMax only apply to lists of ints"), all);
         assertTrue(r.warnings().stream().anyMatch(w -> w.startsWith("ENABLE_CHECKOUT: looks like a feature flag")));
     }
 }

@@ -153,6 +153,8 @@ public final class CueWriter {
                 }
                 opt("minItems", v.minItems);
                 opt("maxItems", v.maxItems);
+                opt("itemMin", v.itemMin);
+                opt("itemMax", v.itemMax);
             }
             case JSON -> opt("schema", v.schema);
             default -> {

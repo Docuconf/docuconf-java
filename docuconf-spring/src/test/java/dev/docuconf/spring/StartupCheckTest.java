@@ -151,6 +151,22 @@ class StartupCheckTest {
     }
 
     @Test
+    void listItemBounds() throws Exception {
+        shop.env.put("SHOP_SHARDS", "0,7,1023");
+        try (ConfigurableApplicationContext ctx = shop.run()) {
+            assertEquals(List.of(0, 7, 1023), ctx.getBean(ShopProperties.class).shards());
+        }
+        shop.env.put("SHOP_SHARDS", "3,1024");
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("out_of_range SHOP_SHARDS"), codes(e));
+        assertTrue(e.getViolations().get(0).message().contains("itemMax 1023"), e.getViolations().toString());
+        shop.env.put("SHOP_SHARDS", "-1");
+        assertEquals(List.of("out_of_range SHOP_SHARDS"), codes(fails()));
+        shop.env.put("SHOP_SHARDS", "1,x");
+        assertEquals(List.of("invalid_type SHOP_SHARDS"), codes(fails()));
+    }
+
+    @Test
     void missingRequiredVariableAndFiles() throws Exception {
         shop.env.remove("SHOP_DATABASEURL");
         Files.delete(tmp.resolve("etc/shop/routes/routes.yaml"));

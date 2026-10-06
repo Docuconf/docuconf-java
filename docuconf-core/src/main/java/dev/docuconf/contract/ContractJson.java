@@ -132,6 +132,8 @@ public final class ContractJson {
         }
         put(m, "minItems", v.minItems);
         put(m, "maxItems", v.maxItems);
+        put(m, "itemMin", v.itemMin);
+        put(m, "itemMax", v.itemMax);
         put(m, "schema", v.schema);
         put(m, "default", v.defaultValue);
         return m;
@@ -287,6 +289,8 @@ public final class ContractJson {
             }
             v.minItems = integer(vm.get("minItems"));
             v.maxItems = integer(vm.get("maxItems"));
+            v.itemMin = longValue(vm.get("itemMin"));
+            v.itemMax = longValue(vm.get("itemMax"));
             v.schema = (Map<String, Object>) vm.get("schema");
             v.defaultValue = vm.get("default");
             c.vars.put(name, v);
@@ -345,6 +349,10 @@ public final class ContractJson {
         }
         Map<String, Object> m = (Map<String, Object>) o;
         return new Deprecation((String) m.get("message"), (String) m.get("replacedBy"));
+    }
+
+    private static Long longValue(Object o) {
+        return o == null ? null : ((Number) o).longValue();
     }
 
     private static Integer integer(Object o) {

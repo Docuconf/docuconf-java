@@ -77,6 +77,8 @@ contract.#Contract & {
 			configKey: "gateway.probe-ports"
 			items: "int"
 			encoding: "csv"
+			itemMin: 1
+			itemMax: 65535
 			default: [8080, 9090]
 		}
 		GATEWAY_RATELIMITS: {

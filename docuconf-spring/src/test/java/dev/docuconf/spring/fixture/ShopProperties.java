@@ -40,6 +40,7 @@ import org.springframework.validation.annotation.Validated;
  * @param port HTTP listen port
  * @param timeout Upstream request timeout
  * @param origins Origins allowed to call the API
+ * @param shards Shard ids this instance owns
  * @param level Minimum log level
  * @param limits Default per-client rate limits
  * @param contact Operator contact address
@@ -60,6 +61,7 @@ public record ShopProperties(
         @Min(1) @Max(65535) @DefaultValue("8080") int port,
         @DurationMin(seconds = 1) @DefaultValue("PT30S") Duration timeout,
         @Size(max = 3) List<String> origins,
+        List<@Min(0) @Max(1023) Integer> shards,
         @DefaultValue("INFO") Level level,
         @Json RateLimits limits,
         @Email String contact,

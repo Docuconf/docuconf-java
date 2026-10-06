@@ -133,12 +133,12 @@ How Java maps to the contract:
 | Property `billing.database-url` | Variable `BILLING_DATABASEURL`, Spring's relaxed binding for environment variables (`configKey` keeps the property name). Nested classes add segments: `BILLING_DB_POOLSIZE`. |
 | `String`, `Path`, `Locale`, ... | `string`. `@Size` → `minLength`/`maxLength`; `@NotBlank` → required, `minLength: 1`, `pattern: "\\S"`. |
 | `@Pattern(regexp = "p")` | `pattern: "^(?:p)$"`: `@Pattern` matches the whole value, contract patterns match anywhere (SPEC §4.3). Patterns using Java-only regex features fail the build. |
-| `int`, `long`, `Integer`, ... | `int`, with `@Min`/`@Max`/`@Range`/`@Positive`... |
+| `int`, `long`, `Integer`, ... | `int`, with `@Min`/`@Max`/`@Range`/`@Positive`... A type narrower than 64 bits also exports its own range (`int`/`Integer`: `min: -2147483648`, `max: 2147483647`; likewise `short` and `byte`), so the platform never accepts a value the field cannot hold (SPEC §5). |
 | `double`, `BigDecimal`, ... | `float`, with inclusive `@DecimalMin`/`@DecimalMax`. Exclusive bounds (`@Positive`) have no contract form and are checked only at startup. |
 | `Duration` | `duration` with `encoding: "iso8601"`; `@DurationMin`/`@DurationMax` (Hibernate Validator) → `min`/`max`. Spring's simple format takes one unit (`90s`), so the canonical Go form `1m30s` would not parse; ISO-8601 (`PT1M30S`) does. |
 | `URI`, `URL`, or `@UrlSchemes` | `url` |
 | an `enum` | `enum` with the constant names (Spring also accepts them in any case). |
-| `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (Spring splits comma-separated values; `@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. |
+| `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (Spring splits comma-separated values; `@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. Container-element constraints on int items, `List<@Min(0) @Max(1023) Integer>`, → `itemMin`/`itemMax`, checked at startup (`out_of_range`); `Integer`, `Short` and `Byte` items also export their type's range, `Long` items do not. |
 | `@NotNull`/`@NotBlank`/`@NotEmpty` without a default | `required: true` |
 | Field initializer, `@DefaultValue`, value in `application.yml` | `default` (the yml value wins, as in Spring); a required property with one becomes optional. |
 | Value in `application-{profile}.yml` (or a `spring.config.activate.on-profile` document) | `profiles.defaults.{profile}`, selected by `SPRING_PROFILES_ACTIVE`, which is added to the contract as a single profile name defaulting to `profiles.default` (`spring.profiles.active` or `spring.profiles.default` from `application.yml`, else `default`). |
