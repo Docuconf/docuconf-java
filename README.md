@@ -137,7 +137,7 @@ How Java maps to the contract:
 | `double`, `BigDecimal`, ... | `float`, with inclusive `@DecimalMin`/`@DecimalMax`. Exclusive bounds (`@Positive`) have no contract form and are checked only at startup. |
 | `Duration` | `duration` with `encoding: "iso8601"`; `@DurationMin`/`@DurationMax` (Hibernate Validator) → `min`/`max`. Spring's simple format takes one unit (`90s`), so the canonical Go form `1m30s` would not parse; ISO-8601 (`PT1M30S`) does. |
 | `URI`, `URL`, or `@UrlSchemes` | `url` |
-| an `enum` | `enum` with the constant names (Spring also accepts them in any case). |
+| an `enum` | `enum` with the constant names. Values are case-sensitive, as the platform checks them: an environment variable must spell the constant exactly (`WARN`, not `warn`), while `application*.yml` keeps Spring's lenient matching. |
 | `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (Spring splits comma-separated values; `@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. Container-element constraints on int items, `List<@Min(0) @Max(1023) Integer>`, → `itemMin`/`itemMax`, checked at startup (`out_of_range`); `Integer`, `Short` and `Byte` items also export their type's range, `Long` items do not. |
 | `@NotNull`/`@NotBlank`/`@NotEmpty` without a default | `required: true` |
 | Field initializer, `@DefaultValue`, value in `application.yml` | `default` (the yml value wins, as in Spring); a required property with one becomes optional. |
