@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The contract meta-schema (spec/cue) lives in docuconf-go; the export tests vet contracts against it.
+      # The contract meta-schema (spec/cue) and the conformance suite (conformance/cases.json) live in docuconf-go.
       - uses: actions/checkout@v4
         with:
           repository: docuconf/docuconf-go
@@ -50,6 +50,9 @@ jobs:
         env:
           DOCUCONF_SPEC_CUE: ${{ github.workspace }}/docuconf-go/spec/cue
           DOCUCONF_REQUIRE_VET: "1"
+          # The shared conformance suite (SPEC section 12), run through the contract-first mode.
+          DOCUCONF_CONFORMANCE: ${{ github.workspace }}/docuconf-go/conformance/cases.json
+          DOCUCONF_REQUIRE_CONFORMANCE: "1"
 
       - name: Check the release build (sources, javadoc) without signing
         if: matrix.java == '21' && matrix.spring-boot == '3.5.16'

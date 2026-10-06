@@ -256,6 +256,47 @@ those values like any other. It never resolves references itself. If a secret st
 
 The message names the scheme, never the reference itself.
 
+## Contract-first mode
+
+To validate against a contract written by hand in CUE instead of declared in Java, export it as JSON and load the
+environment against it with `ContractFirst` (in `docuconf-core`, no Spring needed):
+
+```sh
+cue export ./contract > contract.json   # the package holding contract.#Contract & {...}
+```
+
+```java
+Map<String, Object> values = ContractFirst.boot(Path.of("contract.json"));  // System.getenv(); throws on violations
+ContractFirst.Result r = ContractFirst.load(json, Map.of("PORT", "8080"));    // or any map, without throwing
+```
+
+It parses every wire encoding of SPEC §5 (lists: `csv` with `separator`, `json`, `indexed` as `NAME__0`,
+`NAME__1`, ...; durations: `go`, `iso8601`, `seconds`, `timespan`) and checks constraints with the same code the
+Spring path uses (`VarChecker`). Values are `String` (string, url, enum), `Long`, `BigDecimal`, `Boolean`,
+`Duration`, `List<String>`/`List<Long>`, and the parsed JSON for `json` variables, which are validated against
+their JSON Schema. Unset optional variables are `null`. An unset variable takes the default of the profile its `profiles.selector`
+variable selects, else its own default. File inputs are checked too (existence, size, TLS, CA
+bundles, keystores, text files); a config file is schema-checked only when it is JSON. `boot` writes violations to
+the termination log, as the Spring check does. The contract itself is validated first; an invalid one throws
+`IllegalArgumentException`.
+
+## Conformance
+
+`ConformanceTest` (in `docuconf-core`) runs the shared suite from docuconf-go (`conformance/cases.json`, SPEC §12)
+through the contract-first mode, one JUnit test per case, named by the case `id`:
+
+```sh
+DOCUCONF_CONFORMANCE=../docuconf-go/conformance/cases.json DOCUCONF_REQUIRE_CONFORMANCE=1 \
+  mvn test -pl docuconf-core -Dtest=ConformanceTest
+```
+
+Without `DOCUCONF_CONFORMANCE` it looks for `docuconf-go/conformance/cases.json` in the working directory and its
+parents (so a sibling checkout is found), and skips when there is none unless `DOCUCONF_REQUIRE_CONFORMANCE=1`.
+CI runs it against docuconf-go `main` with both set.
+
+Skipped capability tags: none. Java holds every 64-bit integer (`int64`), and contract-first mode validates `json`
+values against their JSON Schema (`json-schema`).
+
 ## Develop
 
 ```sh
@@ -270,7 +311,7 @@ exported contract is the golden file `docuconf-sample/src/test/resources/golden/
 (regenerate with `mvn test -pl docuconf-sample -am -Ddocuconf.updateGolden=true`). Certificates for tests are
 generated with Bouncy Castle (test scope only).
 
-Not done yet: Markdown docs generation, a contract-first loader for hand-written CUE, multi-profile activation
+Not done yet: Markdown docs generation, multi-profile activation
 (`SPRING_PROFILES_ACTIVE=prod,eu` is rejected by the contract; see SPEC §13 question 5).
 
 ## Licence
