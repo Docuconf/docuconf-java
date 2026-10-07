@@ -31,6 +31,19 @@ public final class VarChecker {
      * @return the violations, empty when it is valid
      */
     public static List<Violation> check(VarSpec v, Object value) {
+        return check(v, value, null);
+    }
+
+    /**
+     * Checks one value that was read from its wire string. A json value's {@code maxLength} is measured on
+     * {@code wire}, as received; every other check is the same as {@link #check(VarSpec, Object)}.
+     *
+     * @param v the variable
+     * @param value the value, not {@code null}
+     * @param wire the raw value as received, or {@code null} when the value has no wire string
+     * @return the violations, empty when it is valid
+     */
+    public static List<Violation> check(VarSpec v, Object value, String wire) {
         List<Violation> out = new ArrayList<>();
         String shown = v.secret ? "" : " (got " + show(value) + ")";
         switch (v.type) {
@@ -89,13 +102,15 @@ public final class VarChecker {
                 String s = value.toString();
                 if (!URL.matcher(s).matches()) {
                     out.add(new Violation(Code.INVALID_TYPE, v.name, "is not a URL of the form scheme://..." + shown));
-                } else if (v.schemes != null && !v.schemes.isEmpty()) {
-                    String scheme = s.substring(0, s.indexOf(':'));
-                    if (!v.schemes.contains(scheme)) {
-                        out.add(new Violation(Code.INVALID_SCHEME, v.name,
-                                "must use one of the schemes " + String.join(", ", v.schemes)
-                                        + (v.secret ? "" : " (got " + scheme + ")")));
-                    }
+                } else if (v.schemes != null && !v.schemes.isEmpty()
+                        && !v.schemes.contains(s.substring(0, s.indexOf(':')))) {
+                    out.add(new Violation(Code.INVALID_SCHEME, v.name,
+                            "must use one of the schemes " + String.join(", ", v.schemes)
+                                    + (v.secret ? "" : " (got " + s.substring(0, s.indexOf(':')) + ")")));
+                } else if (v.maxLength != null && length(s) > v.maxLength) {
+                    // A secret reports its length, never its value.
+                    out.add(new Violation(Code.OUT_OF_RANGE, v.name,
+                            "is " + length(s) + " characters, above maxLength " + v.maxLength + shown));
                 }
             }
             case ENUM -> {
@@ -134,12 +149,68 @@ public final class VarChecker {
                             break;
                         }
                     }
+                } else if (v.itemMinLength != null || v.itemMaxLength != null) {
+                    // Each item after the list is split, so a separator is never counted.
+                    for (int i = 0; i < l.size(); i++) {
+                        String item = String.valueOf(l.get(i));
+                        int len = length(item);
+                        String got = v.secret ? "" : " (got " + show(item) + ")";
+                        if (v.itemMinLength != null && len < v.itemMinLength) {
+                            out.add(new Violation(Code.OUT_OF_RANGE, v.name, "item " + i + " is " + len
+                                    + " characters, below itemMinLength " + v.itemMinLength + got));
+                            break;
+                        }
+                        if (v.itemMaxLength != null && len > v.itemMaxLength) {
+                            out.add(new Violation(Code.OUT_OF_RANGE, v.name, "item " + i + " is " + len
+                                    + " characters, above itemMaxLength " + v.itemMaxLength + got));
+                            break;
+                        }
+                    }
+                }
+            }
+            case JSON -> {
+                // Without a wire string (a default, a profile or overlay value), measure the compact JSON the
+                // platform renders.
+                if (v.maxLength != null) {
+                    String measured = wire;
+                    if (measured == null) {
+                        try {
+                            measured = dev.docuconf.contract.Json.write(value);
+                        } catch (IllegalArgumentException e) {
+                            break;
+                        }
+                    }
+                    Violation x = jsonMaxLength(v, measured);
+                    if (x != null) {
+                        out.add(x);
+                    }
                 }
             }
             default -> {
             }
         }
         return out;
+    }
+
+    /**
+     * Checks a json value's wire string against {@code maxLength} (SPEC §4.3): the value as the app received it,
+     * whitespace included, before it is parsed.
+     *
+     * @param v the variable
+     * @param wire the value as received
+     * @return the violation, or {@code null} when it fits
+     */
+    public static Violation jsonMaxLength(VarSpec v, String wire) {
+        if (v.maxLength == null || length(wire) <= v.maxLength) {
+            return null;
+        }
+        return new Violation(Code.OUT_OF_RANGE, v.name,
+                "is " + length(wire) + " characters of JSON, above maxLength " + v.maxLength);
+    }
+
+    /** The length of a value in characters: Unicode code points, not UTF-16 units (SPEC §4.3). */
+    private static int length(String s) {
+        return s.codePointCount(0, s.length());
     }
 
     private static BigDecimal decimal(Object o) {

@@ -525,6 +525,12 @@ public final class DocuconfChecker {
         Class<?> type = b == null ? Object.class : load(b.javaType());
         try {
             Object value = JsonMapper.forFormat("json").read(raw, type);
+            // maxLength bounds the value as received, whitespace included (SPEC §4.3).
+            Violation tooLong = VarChecker.jsonMaxLength(v, raw);
+            if (tooLong != null) {
+                out.add(tooLong);
+                return null;
+            }
             if (validator != null) {
                 for (GraphValidator.Problem p : GraphValidator.validate(validator, value)) {
                     out.add(new Violation(Code.SCHEMA_MISMATCH, v.name, p.path() + ": "
@@ -556,6 +562,15 @@ public final class DocuconfChecker {
         if (capture.error != null) {
             out.add(new Violation(Code.INVALID_TYPE, v.name, "is not an object that fits " + type.getSimpleName()));
             return null;
+        }
+        if (value != null && v.maxLength != null) {
+            // Nested keys have no wire string: measure the compact JSON of the bound value (SPEC §4.3).
+            String compact = JsonMapper.forFormat("json").writeCompact(value);
+            Violation tooLong = compact == null ? null : VarChecker.jsonMaxLength(v, compact);
+            if (tooLong != null) {
+                out.add(tooLong);
+                return null;
+            }
         }
         if (value != null && validator != null) {
             for (GraphValidator.Problem p : GraphValidator.validate(validator, value)) {

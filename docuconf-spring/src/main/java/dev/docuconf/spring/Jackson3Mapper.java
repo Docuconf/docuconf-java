@@ -41,6 +41,19 @@ final class Jackson3Mapper implements JsonMapper {
     }
 
     @Override
+    public String writeCompact(Object value) {
+        try {
+            return mapper.rebuild()
+                    .changeDefaultPropertyInclusion(incl -> incl.withValueInclusion(
+                            com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL))
+                    .build()
+                    .writeValueAsString(value);
+        } catch (JacksonException e) {
+            return null;
+        }
+    }
+
+    @Override
     public Object convert(Object tree, Type type) throws Mismatch {
         try {
             return mapper.treeToValue((JsonNode) tree, mapper.constructType(type));

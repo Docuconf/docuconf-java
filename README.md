@@ -368,6 +368,7 @@ the startup check catches whatever still gets through.
 | `@UrlSchemes({...})` | A `url` with allowed schemes (on `String`, `URI` or `URL`). |
 | `@EnumValues(EnumCase.LOWER)` | How this enum property's values are spelled in the contract (`AS_DECLARED`, `LOWER`, `KEBAB`); `@Docuconf(enumCase = ...)` sets it for the class. |
 | `@Json` | One variable holding JSON, bound with Jackson; the contract carries a JSON Schema of the type (with a top-level `@Size`/`@NotEmpty` as `minItems`/`maxItems`). |
+| `@MaxLength(n)` | `maxLength` on a `url` or `@Json` variable, for apps that store the value in a fixed-width field. A url is measured as it is; a json value as received, whitespace included, before it is parsed (as compact JSON when it comes from `application*.yml` or an overlay as nested keys). |
 | `@TlsFile(dir)` on `TlsKeyPair` | `tls.crt`, `tls.key` (PKCS#8, PKCS#1 or SEC1 PEM), optional `ca.crt`. Checked for key match, validity, `minRemaining`, `dnsNames` (SANs; a wildcard covers one label), `keyAlgorithms`, and the PKIX chain to `ca.crt` with `requireCA`. `sslContext()` and `keyStore()` build JSSE objects. |
 | `@ConfigFile(path)` on a class or record | JSON, YAML or TOML, read with Jackson into that type (unknown properties rejected) and validated with Bean Validation through the whole object graph. The contract carries a JSON Schema generated from the type. |
 | `@CaBundleFile(path)` on `CaBundle` | PEM CA certificates, at least `minCertificates`. |
@@ -391,13 +392,19 @@ Every file annotation takes `name`, `pathEnv`, `reload` (`RESTART` or `WATCH`) a
 | `int`, `long`, `Integer`, ... | `int`, with `@Min`/`@Max`/`@Range`/`@Positive`... A type narrower than 64 bits also exports its own range (`int`: `min: -2147483648`, `max: 2147483647`). An `int` without a default is 0 when unset, so `@Min(1) int` needs `@DefaultValue` or `@NotNull Integer`; the build says so. |
 | `double`, `BigDecimal`, ... | `float`, with inclusive `@DecimalMin`/`@DecimalMax`. Exclusive bounds (`@Positive`) have no contract form and are checked only at startup. |
 | `Duration` | `duration` with `encoding: "iso8601"`; `@DurationMin`/`@DurationMax` → `min`/`max`. Spring's simple format takes one unit (`90s`), so the Go form `1m30s` does not parse; the error says `expected an ISO 8601 duration like PT30S`. |
-| `URI`, `URL`, or `@UrlSchemes` | `url` |
+| `URI`, `URL`, or `@UrlSchemes` | `url`. `@MaxLength`, or `@Size(max)` on a `String`, → `maxLength`. |
 | an `enum` | `enum` with the constant names, or as `enumCase` spells them. The platform checks that spelling exactly; the app accepts any case Spring accepts (`warn` for `WARN`), wherever the value comes from. |
-| `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (`@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. `List<@Min(0) @Max(1023) Integer>` → `itemMin`/`itemMax`. Spring also reads one variable per item (`ORDERS_SHARDS_0`, `ORDERS_SHARDS__1`): items must be numbered from 0 with no gap (SPEC section 5). |
+| `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (`@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. `List<@Min(0) @Max(1023) Integer>` → `itemMin`/`itemMax`. On string items, `List<@Size(min = 2, max = 4) String>` → `itemMinLength`/`itemMaxLength`, checked on each item after splitting, so the separator is never counted. `@Size` on int items fails the build. Spring also reads one variable per item (`ORDERS_SHARDS_0`, `ORDERS_SHARDS__1`): items must be numbered from 0 with no gap (SPEC section 5). |
 | `@NotNull`/`@NotBlank`/`@NotEmpty` without a default | `required: true` |
 | Field initializer, `@DefaultValue`, value in `application.yml` | `default` (the yml value wins, as in Spring); a required property with one becomes optional. |
 | Value in `application-{profile}.yml` (or a `spring.config.activate.on-profile` document) | `profiles.defaults.{profile}`, selected by `SPRING_PROFILES_ACTIVE`, which is added to the contract as a single profile name. |
 | `Map`, lists of objects | Not expressible in v1alpha1: left out with a warning (file-only). |
+
+Lengths (`minLength`, `maxLength`, `itemMinLength`, `itemMaxLength`) count characters, meaning Unicode code points
+(`codePointCount`), never bytes or UTF-16 units (SPEC section 4.3): `日本` is 2 and `ZÜ01` fits `@Size(max = 4)`. An emoji
+is one character but two Java `char`s, and Bean Validation's own `@Size` counts `char`s, so near the limit
+docuconf's startup check and Bean Validation can disagree on astral characters. A value above a limit is
+`out_of_range`; a too-long secret reports its length, never its value.
 
 Processor options: `-Adocuconf.name=`, `-Adocuconf.appVersion=`, `-Adocuconf.resources=<dir with application.yml>`.
 

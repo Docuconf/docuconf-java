@@ -96,6 +96,7 @@ class ContractCoreTest {
         url.required = true;
         url.secret = true;
         url.schemes = List.of("postgres");
+        url.maxLength = 2048;
         c.vars.put(url.name, url);
         VarSpec ratio = new VarSpec("DEMO_RATIO", VarType.FLOAT, "Sampling ratio");
         ratio.min = new BigDecimal("0");
@@ -111,6 +112,8 @@ class ContractCoreTest {
         tags.items = "string";
         tags.encoding = "csv";
         tags.separator = ";";
+        tags.itemMinLength = 1;
+        tags.itemMaxLength = 8;
         tags.defaultValue = List.of("a$b", "c");
         c.vars.put(tags.name, tags);
         VarSpec shards = new VarSpec("DEMO_SHARDS", VarType.LIST, "Shard ids this instance owns");
@@ -127,6 +130,7 @@ class ContractCoreTest {
         schema.put("properties", Map.of("perMinute", Map.of("type", "integer", "minimum", 1L)));
         schema.put("required", List.of("perMinute"));
         limits.schema = schema;
+        limits.maxLength = 256;
         c.vars.put(limits.name, limits);
         VarSpec profile = new VarSpec("SPRING_PROFILES_ACTIVE", VarType.STRING, "Active Spring profile");
         c.vars.put(profile.name, profile);
@@ -170,6 +174,79 @@ class ContractCoreTest {
         Map<String, Object> shards = (Map<String, Object>) ((Map<String, Object>) e.get("vars")).get("DEMO_SHARDS");
         assertEquals(0L, shards.get("itemMin"));
         assertEquals(1023L, shards.get("itemMax"));
+        assertEquals(1L, tags.get("itemMinLength"));
+        assertEquals(8L, tags.get("itemMaxLength"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> vars = (Map<String, Object>) e.get("vars");
+        assertEquals(2048L, ((Map<?, ?>) vars.get("DEMO_DATABASEURL")).get("maxLength"));
+        assertEquals(256L, ((Map<?, ?>) vars.get("DEMO_LIMITS")).get("maxLength"));
+    }
+
+    @Test
+    void lengthLimitsCountCodePoints() {
+        VarSpec url = new VarSpec("CALLBACK", VarType.URL, "Where to report each run");
+        url.maxLength = 24;
+        assertEquals(List.of(), dev.docuconf.check.VarChecker.check(url, "https://例え.jp/日本語の道/一二三四"));
+        assertEquals("is 25 characters, above maxLength 24 (got \"https://例え.jp/日本語の道/一二三四五\")",
+                dev.docuconf.check.VarChecker.check(url, "https://例え.jp/日本語の道/一二三四五").get(0).message());
+        url.secret = true;
+        assertEquals("is 25 characters, above maxLength 24",
+                dev.docuconf.check.VarChecker.check(url, "https://例え.jp/日本語の道/一二三四五").get(0).message());
+
+        VarSpec branches = new VarSpec("BRANCHES", VarType.LIST, "Branch codes");
+        branches.items = "string";
+        branches.itemMinLength = 2;
+        branches.itemMaxLength = 4;
+        // An emoji is one code point but two UTF-16 units.
+        assertEquals(List.of(), dev.docuconf.check.VarChecker.check(branches, List.of("ZÜ01", "日本", "\uD83D\uDE80\uD83D\uDE80")));
+        assertEquals(1, dev.docuconf.check.VarChecker.check(branches, List.of("BE", "ZÜRICH")).size());
+        assertEquals(1, dev.docuconf.check.VarChecker.check(branches, List.of("\uD83D\uDE80")).size());
+
+        VarSpec limits = new VarSpec("LIMITS", VarType.JSON, "Run limits");
+        limits.maxLength = 16;
+        // Without a wire string, the compact JSON is measured; with one, the wire string as received.
+        assertEquals(List.of(), dev.docuconf.check.VarChecker.check(limits, Map.of("max", 12345678L)));
+        assertEquals(1, dev.docuconf.check.VarChecker.check(limits, Map.of("max", 123456789L)).size());
+        assertEquals(1, dev.docuconf.check.VarChecker.check(limits, Map.of("max", 123456L), "{ \"max\": 123456 }").size());
+        assertEquals(List.of(), dev.docuconf.check.VarChecker.check(limits, Map.of("n", "日本語の道路xy"), "{\"n\":\"日本語の道路xy\"}"));
+    }
+
+    @Test
+    void lengthLimitDeclarationErrors() {
+        Contract c = new Contract();
+        c.name = "len";
+        VarSpec ints = new VarSpec("LEN_PORTS", VarType.LIST, "Worker ports");
+        ints.items = "int";
+        ints.itemMaxLength = 4;
+        c.vars.put(ints.name, ints);
+        VarSpec order = new VarSpec("LEN_CODES", VarType.LIST, "Branch codes");
+        order.items = "string";
+        order.itemMinLength = 5;
+        order.itemMaxLength = 1;
+        c.vars.put(order.name, order);
+        VarSpec port = new VarSpec("LEN_PORT", VarType.INT, "Listen port");
+        port.maxLength = 5;
+        c.vars.put(port.name, port);
+        VarSpec hook = new VarSpec("LEN_HOOK", VarType.URL, "Callback URL");
+        hook.maxLength = 10;
+        hook.defaultValue = "https://a.example/long";
+        c.vars.put(hook.name, hook);
+        VarSpec limits = new VarSpec("LEN_LIMITS", VarType.JSON, "Run limits");
+        limits.maxLength = 16;
+        limits.defaultValue = Map.of("max", 123456789L);
+        c.vars.put(limits.name, limits);
+        VarSpec tags = new VarSpec("LEN_TAGS", VarType.LIST, "Tags to apply");
+        tags.items = "string";
+        tags.itemMaxLength = 4;
+        tags.defaultValue = List.of("BE", "ZÜRICH");
+        c.vars.put(tags.name, tags);
+        String all = String.join("\n", DeclarationValidator.validate(c).errors());
+        assertTrue(all.contains("LEN_PORTS: itemMinLength and itemMaxLength only apply to lists of strings"), all);
+        assertTrue(all.contains("LEN_CODES: itemMinLength is greater than itemMaxLength"), all);
+        assertTrue(all.contains("LEN_PORT: maxLength only applies to strings, urls and json"), all);
+        assertTrue(all.contains("LEN_HOOK: default is 22 characters, above maxLength 10"), all);
+        assertTrue(all.contains("LEN_LIMITS: default is 17 characters of JSON, above maxLength 16"), all);
+        assertTrue(all.contains("LEN_TAGS: default item 1 is 6 characters, above itemMaxLength 4"), all);
     }
 
     @Test

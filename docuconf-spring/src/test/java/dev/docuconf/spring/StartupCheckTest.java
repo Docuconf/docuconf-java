@@ -169,6 +169,34 @@ class StartupCheckTest {
     }
 
     @Test
+    void lengthLimitsCountCodePoints() throws Exception {
+        shop.env.put("SHOP_BRANCHES", "ZÜ01,日本,\uD83D\uDE80\uD83D\uDE80");
+        shop.env.put("SHOP_LIMITS", "{\"perMinute\":60,\"burst\":10}");
+        try (ConfigurableApplicationContext ctx = shop.run()) {
+            assertEquals(List.of("ZÜ01", "日本", "\uD83D\uDE80\uD83D\uDE80"), ctx.getBean(ShopProperties.class).branches());
+        }
+        shop.env.put("SHOP_BRANCHES", "BE,ZÜRICH");
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("out_of_range SHOP_BRANCHES"), codes(e));
+        assertTrue(e.getViolations().get(0).message().contains("6 characters, above itemMaxLength 4"),
+                e.getViolations().toString());
+        shop.env.put("SHOP_BRANCHES", "BE");
+        // A json value is measured as received, whitespace included.
+        shop.env.put("SHOP_LIMITS", "{ \"perMinute\": 60, \"burst\": 10 }");
+        assertEquals(List.of("out_of_range SHOP_LIMITS"), codes(fails()));
+    }
+
+    @Test
+    void nestedJsonIsMeasuredAsCompactJson() {
+        shop.env.put("SHOP_LIMITS_PERMINUTE", "123456789");
+        shop.env.put("SHOP_LIMITS_BURST", "123456789");
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("out_of_range SHOP_LIMITS"), codes(e));
+        assertTrue(e.getViolations().get(0).message().contains("41 characters of JSON, above maxLength 30"),
+                e.getViolations().toString());
+    }
+
+    @Test
     void indexedListItemsFromTheEnvironment() throws Exception {
         // Spring's relaxed binding reads SHOP_SHARDS_0 and SHOP_SHARDS__0 as list items; SHOP_SHARDS_HOST is not one.
         shop.env.put("SHOP_SHARDS_0", "5");

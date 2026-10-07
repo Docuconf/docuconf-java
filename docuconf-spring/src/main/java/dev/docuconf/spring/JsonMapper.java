@@ -46,6 +46,13 @@ interface JsonMapper {
     /** Binds a tree to a type. */
     Object convert(Object tree, Type type) throws Mismatch;
 
+    /**
+     * Writes a value as compact JSON, leaving out null properties.
+     *
+     * @return the JSON, or {@code null} when the value does not serialize
+     */
+    String writeCompact(Object value);
+
     /** Parses and binds a JSON text. */
     default Object read(String json, Type type) throws Malformed, Mismatch {
         Object tree = readTree(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));

@@ -40,6 +40,17 @@ final class Jackson2Mapper implements JsonMapper {
     }
 
     @Override
+    public String writeCompact(Object value) {
+        try {
+            return mapper.copy()
+                    .setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+                    .writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
+    }
+
+    @Override
     public Object convert(Object tree, Type type) throws Mismatch {
         try {
             return mapper.treeToValue((JsonNode) tree, mapper.constructType(type));

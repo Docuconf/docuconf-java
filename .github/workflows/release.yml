@@ -17,10 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
+      - name: Pick the docuconf-go ref
+        id: dcref
+        run: echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"
+      - name: Check out docuconf-go
+        uses: actions/checkout@v4
         with:
           repository: docuconf/docuconf-go
           path: docuconf-go
+          ref: ${{ steps.dcref.outputs.ref }}
 
       - uses: actions/setup-java@v4
         with:
@@ -56,3 +61,74 @@ jobs:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+
+  # Also deploys docuconf-parent, docuconf-core, docuconf-processor and
+  # docuconf-spring to GitHub Packages (maven.pkg.github.com), unsigned, and
+  # attaches the jars to the GitHub Release for the tag. docuconf-sample is
+  # never deployed. It runs the same tests as `publish` but does not depend
+  # on it, so it works with only the workflow's GITHUB_TOKEN. See RELEASING.md.
+  github:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release and upload its assets
+      packages: write # deploy to maven.pkg.github.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the docuconf-go ref
+        id: dcref
+        run: echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"
+      - name: Check out docuconf-go
+        uses: actions/checkout@v4
+        with:
+          repository: docuconf/docuconf-go
+          path: docuconf-go
+          ref: ${{ steps.dcref.outputs.ref }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          # Writes ~/.m2/settings.xml with a <server id="github"> reading these variables.
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install cue
+        run: go install cuelang.org/go/cmd/cue@v0.17.1
+
+      - name: Set the version from the tag
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          mvn -B -ntp versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DgenerateBackupPoms=false
+
+      - name: Test and deploy to GitHub Packages
+        run: >-
+          mvn -B -ntp -Pgithub deploy
+          -DaltDeploymentRepository=github::https://maven.pkg.github.com/Docuconf/docuconf-java
+        env:
+          DOCUCONF_SPEC_CUE: ${{ github.workspace }}/docuconf-go/spec/cue
+          DOCUCONF_REQUIRE_VET: "1"
+          DOCUCONF_CONFORMANCE: ${{ github.workspace }}/docuconf-go/conformance/cases.json
+          DOCUCONF_REQUIRE_CONFORMANCE: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attach the jars to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            flags=()
+            case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "docuconf-java $VERSION" "${flags[@]}"
+          fi
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            docuconf-core/target/docuconf-core-"$VERSION"*.jar \
+            docuconf-processor/target/docuconf-processor-"$VERSION"*.jar \
+            docuconf-spring/target/docuconf-spring-"$VERSION"*.jar

@@ -344,7 +344,11 @@ public final class ContractFirst {
             out.add(new Violation(e.code(), v.name, e.getMessage() + shown));
             return null;
         }
-        List<Violation> found = new ArrayList<>(VarChecker.check(v, value));
+        List<Violation> found = new ArrayList<>(VarChecker.check(v, value, raw));
+        if (!found.isEmpty()) {
+            out.addAll(found);
+            return null;
+        }
         if (v.type == VarType.JSON && v.schema != null) {
             for (String problem : JsonSchema.validate(v.schema, value, v.secret)) {
                 found.add(new Violation(Code.SCHEMA_MISMATCH, v.name, problem));

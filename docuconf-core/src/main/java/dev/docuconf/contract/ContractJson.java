@@ -137,6 +137,8 @@ public final class ContractJson {
         put(m, "maxItems", v.maxItems);
         put(m, "itemMin", v.itemMin);
         put(m, "itemMax", v.itemMax);
+        put(m, "itemMinLength", v.itemMinLength);
+        put(m, "itemMaxLength", v.itemMaxLength);
         put(m, "schema", v.schema);
         put(m, "default", v.defaultValue);
         return m;
@@ -298,6 +300,8 @@ public final class ContractJson {
             v.maxItems = integer(vm.get("maxItems"));
             v.itemMin = longValue(vm.get("itemMin"));
             v.itemMax = longValue(vm.get("itemMax"));
+            v.itemMinLength = integer(vm.get("itemMinLength"));
+            v.itemMaxLength = integer(vm.get("itemMaxLength"));
             v.schema = (Map<String, Object>) vm.get("schema");
             v.defaultValue = vm.get("default");
             c.vars.put(name, v);
