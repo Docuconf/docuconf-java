@@ -1,4 +1,5 @@
 org.springframework.boot.diagnostics.FailureAnalyzer=\
-  dev.docuconf.spring.DocuconfFailureAnalyzer
+  dev.docuconf.spring.DocuconfFailureAnalyzer,\
+  dev.docuconf.spring.DocuconfStaleContractFailureAnalyzer
 org.springframework.boot.env.EnvironmentPostProcessor=\
   dev.docuconf.spring.DocuconfOverlayEnvironmentPostProcessor

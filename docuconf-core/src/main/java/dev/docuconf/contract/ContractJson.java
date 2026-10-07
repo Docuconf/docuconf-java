@@ -43,6 +43,9 @@ public final class ContractJson {
         b.put("classes", classes);
         b.put("vars", props(bundle.bindings().vars));
         b.put("files", props(bundle.bindings().files));
+        if (bundle.bindings().springFiles != null) {
+            b.put("springFiles", new java.util.TreeMap<>(bundle.bindings().springFiles));
+        }
         root.put("bindings", b);
         return Json.writePretty(root);
     }
@@ -236,6 +239,10 @@ public final class ContractJson {
         }
         readProps((List<Object>) b.getOrDefault("vars", List.of()), bindings.vars);
         readProps((List<Object>) b.getOrDefault("files", List.of()), bindings.files);
+        if (b.get("springFiles") instanceof Map<?, ?> hashes) {
+            bindings.springFiles = new java.util.TreeMap<>();
+            hashes.forEach((k, v) -> bindings.springFiles.put((String) k, (String) v));
+        }
         return new ContractBundle(c, bindings);
     }
 

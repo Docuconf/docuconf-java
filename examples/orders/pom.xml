@@ -41,19 +41,48 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
-          <!-- Writes META-INF/docuconf/contract.cue (and the contract.json the startup check reads). -->
+          <!-- docuconf: start processor-paths -->
+          <!-- Listing annotationProcessorPaths turns off processor discovery on the class path, so list every
+               processor you use. With annotationProcessorPathsUseDepMgmt, the versions come from your dependency
+               management (Spring Boot's and docuconf-bom). -->
+          <annotationProcessorPathsUseDepMgmt>true</annotationProcessorPathsUseDepMgmt>
           <annotationProcessorPaths>
+            <path>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-configuration-processor</artifactId>
+            </path>
+            <path>
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+            </path>
             <path>
               <groupId>dev.docuconf</groupId>
               <artifactId>docuconf-processor</artifactId>
-              <version>${project.version}</version>
             </path>
           </annotationProcessorPaths>
+          <!-- docuconf: end processor-paths -->
           <compilerArgs combine.children="append">
             <arg>-Adocuconf.appVersion=1.0.0</arg>
           </compilerArgs>
         </configuration>
       </plugin>
+      <!-- docuconf: start maven-plugin -->
+      <plugin>
+        <groupId>dev.docuconf</groupId>
+        <artifactId>docuconf-maven-plugin</artifactId>
+        <version>${project.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <!-- recompile when only application*.yml changed, so the contract never goes stale -->
+              <goal>refresh</goal>
+              <!-- mvn verify fails when the committed contract.cue differs from the exported one -->
+              <goal>check</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- docuconf: end maven-plugin -->
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>

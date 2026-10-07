@@ -37,9 +37,11 @@
   </scm>
 
   <modules>
+    <module>docuconf-bom</module>
     <module>docuconf-core</module>
     <module>docuconf-processor</module>
     <module>docuconf-spring</module>
+    <module>docuconf-maven-plugin</module>
     <module>docuconf-sample</module>
     <module>examples/orders</module>
   </modules>

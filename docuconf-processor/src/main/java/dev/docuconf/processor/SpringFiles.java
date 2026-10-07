@@ -1,6 +1,7 @@
 package dev.docuconf.processor;
 
 import dev.docuconf.contract.Names;
+import dev.docuconf.contract.SpringFileHashes;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
@@ -40,6 +41,8 @@ final class SpringFiles {
     final Map<String, Map<String, Value>> profiles = new TreeMap<>();
     /** Files read, for messages. */
     final List<String> read = new ArrayList<>();
+    /** The SHA-256 of every file read, by name relative to the root, so a stale contract can be detected. */
+    final Map<String, String> hashes = new TreeMap<>();
 
     private final Consumer<String> warn;
 
@@ -94,7 +97,9 @@ final class SpringFiles {
 
     private void load(Path file, String label, String fileProfile) throws IOException {
         read.add(label);
-        String text = Files.readString(file, file.toString().endsWith(".properties")
+        byte[] bytes = Files.readAllBytes(file);
+        hashes.put(label, SpringFileHashes.sha256(bytes));
+        String text = new String(bytes, file.toString().endsWith(".properties")
                 ? StandardCharsets.ISO_8859_1 : StandardCharsets.UTF_8);
         List<Map<String, Object>> docs = new ArrayList<>();
         if (file.toString().endsWith(".properties")) {

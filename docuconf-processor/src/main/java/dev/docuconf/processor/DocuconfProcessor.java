@@ -1092,6 +1092,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
             error(null, "docuconf: could not read application*.yml from " + resources + ": " + e.getMessage());
             return;
         }
+        bindings.springFiles = files.hashes;
         contract.name = serviceName(files);
         contract.appVersion = processingEnv.getOptions().get("docuconf.appVersion");
         contract.sdkVersion = sdkVersion();
@@ -1371,14 +1372,16 @@ public final class DocuconfProcessor extends AbstractProcessor {
         Path build = classes.getParent() == null || classes.getParent().getParent() == null ? null
                 : classes.getParent().getParent().getParent();
         if (build != null && sourceSet != null) {
-            Path gradle = build.resolve("resources").resolve(sourceSet.toString());
-            if (hasApplicationFiles(gradle)) {
-                return gradle;
-            }
+            // The sources first: Gradle does not order compileJava after processResources, so
+            // build/resources/main may still hold the previous build's copy.
             Path src = build.getParent() == null ? null
                     : build.getParent().resolve("src").resolve(sourceSet.toString()).resolve("resources");
             if (src != null && hasApplicationFiles(src)) {
                 return src;
+            }
+            Path gradle = build.resolve("resources").resolve(sourceSet.toString());
+            if (hasApplicationFiles(gradle)) {
+                return gradle;
             }
         }
         return classes;
