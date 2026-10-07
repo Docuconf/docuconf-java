@@ -32,7 +32,10 @@ public final class VarSpec {
     public Object defaultValue;
     /** String: least length. */
     public Integer minLength;
-    /** String: greatest length. */
+    /**
+     * String, url or json: greatest length, in characters (Unicode code points). For json, the length of the value
+     * as received, or of its compact JSON when it has no wire form.
+     */
     public Integer maxLength;
     /** String: RE2 pattern, matched anywhere. */
     public String pattern;
@@ -58,6 +61,10 @@ public final class VarSpec {
     public Long itemMin;
     /** Int list: greatest value of each item. */
     public Long itemMax;
+    /** String list: least length of each item, in characters (Unicode code points). */
+    public Integer itemMinLength;
+    /** String list: greatest length of each item, in characters (Unicode code points). */
+    public Integer itemMaxLength;
     /** JSON: the JSON Schema of the value. */
     public Map<String, Object> schema;
 

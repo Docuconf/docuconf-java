@@ -95,6 +95,7 @@ it. Every input needs one of at least five characters. JavaBeans work too: field
 | `@Secret` | Must come from a Kubernetes Secret; no default anywhere; never printed. |
 | `@UrlSchemes({...})` | A `url` with allowed schemes (on `String`, `URI` or `URL`). |
 | `@Json` | One variable holding JSON, bound with Jackson; the contract carries a JSON Schema of the type. |
+| `@MaxLength(n)` | `maxLength` on a `url` or `@Json` variable, for apps that store the value in a fixed-width field. A url is measured as it is; a json value as received, whitespace included, before it is parsed (as compact JSON when it comes from `application*.yml` or an overlay as nested keys). |
 | `@TlsFile(dir)` on `TlsKeyPair` | `tls.crt`, `tls.key` (PKCS#8, PKCS#1 or SEC1 PEM), optional `ca.crt`. Checked for key match, validity, `minRemaining`, `dnsNames` (SANs; a wildcard covers one label), `keyAlgorithms`, and the PKIX chain to `ca.crt` with `requireCA`. `sslContext()` and `keyStore()` build JSSE objects. |
 | `@ConfigFile(path)` on a class or record | JSON, YAML or TOML, read with Jackson into that type (unknown properties rejected) and validated with Bean Validation through the whole object graph. The contract carries a JSON Schema generated from the type. |
 | `@CaBundleFile(path)` on `CaBundle` | PEM CA certificates, at least `minCertificates`. |
@@ -138,13 +139,19 @@ How Java maps to the contract:
 | `int`, `long`, `Integer`, ... | `int`, with `@Min`/`@Max`/`@Range`/`@Positive`... A type narrower than 64 bits also exports its own range (`int`/`Integer`: `min: -2147483648`, `max: 2147483647`; likewise `short` and `byte`), so the platform never accepts a value the field cannot hold (SPEC §5). |
 | `double`, `BigDecimal`, ... | `float`, with inclusive `@DecimalMin`/`@DecimalMax`. Exclusive bounds (`@Positive`) have no contract form and are checked only at startup. |
 | `Duration` | `duration` with `encoding: "iso8601"`; `@DurationMin`/`@DurationMax` (Hibernate Validator) → `min`/`max`. Spring's simple format takes one unit (`90s`), so the canonical Go form `1m30s` would not parse; ISO-8601 (`PT1M30S`) does. |
-| `URI`, `URL`, or `@UrlSchemes` | `url` |
+| `URI`, `URL`, or `@UrlSchemes` | `url`. `@MaxLength`, or `@Size(max)` on a `String`, → `maxLength`. |
 | an `enum` | `enum` with the constant names. Values are case-sensitive, as the platform checks them: an environment variable must spell the constant exactly (`WARN`, not `warn`), while `application*.yml` keeps Spring's lenient matching. |
-| `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (Spring splits comma-separated values; `@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. Container-element constraints on int items, `List<@Min(0) @Max(1023) Integer>`, → `itemMin`/`itemMax`, checked at startup (`out_of_range`); `Integer`, `Short` and `Byte` items also export their type's range, `Long` items do not. |
+| `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (Spring splits comma-separated values; `@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. Container-element constraints on int items, `List<@Min(0) @Max(1023) Integer>`, → `itemMin`/`itemMax`, checked at startup (`out_of_range`); `Integer`, `Short` and `Byte` items also export their type's range, `Long` items do not. On string items, `List<@Size(min = 2, max = 4) String>` → `itemMinLength`/`itemMaxLength`, checked on each item after splitting, so the separator is never counted. `@Size` on int items fails the build. |
 | `@NotNull`/`@NotBlank`/`@NotEmpty` without a default | `required: true` |
 | Field initializer, `@DefaultValue`, value in `application.yml` | `default` (the yml value wins, as in Spring); a required property with one becomes optional. |
 | Value in `application-{profile}.yml` (or a `spring.config.activate.on-profile` document) | `profiles.defaults.{profile}`, selected by `SPRING_PROFILES_ACTIVE`, which is added to the contract as a single profile name defaulting to `profiles.default` (`spring.profiles.active` or `spring.profiles.default` from `application.yml`, else `default`). |
 | `Map`, lists of objects | Not expressible in v1alpha1: left out with a warning (file-only). |
+
+Lengths (`minLength`, `maxLength`, `itemMinLength`, `itemMaxLength`) count characters, meaning Unicode code points
+(`codePointCount`), never bytes or UTF-16 units (SPEC §4.3): `日本` is 2 and `ZÜ01` fits `@Size(max = 4)`. An emoji
+is one character but two Java `char`s, and Bean Validation's own `@Size` counts `char`s, so near the limit
+docuconf's startup check and Bean Validation can disagree on astral characters. A value above a limit is
+`out_of_range`; a too-long secret reports its length, never its value.
 
 The build fails on declaration errors: a missing description, a default that breaks its own constraint, a
 `@Secret` with a default or a value in any `application*.yml`, a non-RE2 pattern, two inputs mounted in one

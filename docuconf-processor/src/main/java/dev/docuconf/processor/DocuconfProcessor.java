@@ -606,6 +606,11 @@ public final class DocuconfProcessor extends AbstractProcessor {
             warn(p.element(), envName + ": " + w);
         }
         String unit = null;
+        AnnotationMirror maxLength = a.get(D + "MaxLength");
+        if (maxLength != null && kind.type() != VarType.URL && kind.type() != VarType.JSON) {
+            error(p.element(), envName + ": @MaxLength applies to url and @Json properties"
+                    + (kind.type() == VarType.STRING ? "; on a string, use @Size(max = ...)" : ""));
+        }
         switch (kind.type()) {
             case STRING -> {
                 v.minLength = c.sizeMin;
@@ -647,6 +652,13 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 if (s != null) {
                     v.schemes = Mirrors.strings(elements, s, "value");
                 }
+                // @MaxLength, or @Size(max) on a String url, bounds the URL as it is.
+                v.maxLength = maxLength != null ? Integer.valueOf((int) Mirrors.number(elements, maxLength, "value"))
+                        : c.sizeMax;
+                if (c.sizeMin != null) {
+                    warn(p.element(), envName + ": @Size(min) on a url has no contract form; it is checked only by"
+                            + " Bean Validation at startup");
+                }
             }
             case ENUM -> v.values = kind.values();
             case LIST -> {
@@ -670,9 +682,24 @@ public final class DocuconfProcessor extends AbstractProcessor {
                     long[] range = intRange(itemType(p.type()));
                     v.itemMin = intLower(item, range);
                     v.itemMax = intUpper(item, range);
+                    if (item.sizeMin != null || item.sizeMax != null) {
+                        error(p.element(), envName + ": @Size on the items of an int list has no contract form;"
+                                + " use @Min/@Max");
+                    }
+                } else if ("string".equals(v.items)) {
+                    // List<@Size(min = 2, max = 4) String>: the length of each item, in characters.
+                    Constraints item = Constraints.read(elements, p.itemAnnotations());
+                    v.itemMinLength = item.sizeMin;
+                    if ((item.notBlank || item.notEmpty) && (v.itemMinLength == null || v.itemMinLength < 1)) {
+                        v.itemMinLength = 1;
+                    }
+                    v.itemMaxLength = item.sizeMax;
                 }
             }
             case JSON -> {
+                if (maxLength != null) {
+                    v.maxLength = (int) Mirrors.number(elements, maxLength, "value");
+                }
                 SchemaGenerator g = new SchemaGenerator(elements, types);
                 v.schema = g.schema(p.type());
                 for (String err : g.errors()) {
