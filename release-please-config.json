@@ -59,9 +59,51 @@
   ],
   "packages": {
     ".": {
-      "release-type": "maven",
+      "release-type": "java",
       "package-name": "docuconf",
-      "include-component-in-tag": false
+      "include-component-in-tag": false,
+      "extra-files": [
+        {
+          "type": "pom",
+          "path": "pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-bom/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-core/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-processor/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-spring/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-maven-plugin/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-sample/pom.xml"
+        },
+        {
+          "type": "generic",
+          "path": "examples/orders/pom.xml"
+        },
+        {
+          "type": "generic",
+          "path": "examples/orders-gradle/build.gradle.kts"
+        },
+        {
+          "type": "generic",
+          "path": "README.md"
+        }
+      ]
     }
   }
 }

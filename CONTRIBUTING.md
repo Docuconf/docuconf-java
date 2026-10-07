@@ -31,9 +31,10 @@ Commits on their own branches can say anything: only the PR title reaches `main`
 Releases are automated with [release-please](https://github.com/googleapis/release-please).
 
 1. Every push to `main` updates one open release PR, titled like `chore(main): release X.Y.Z`. It bumps the version
-   from the commit types above, sets `<version>` in every `pom.xml` (the parent, all modules and `examples/orders`;
-   the project version is also written into exported contracts as `metadata.generator.version`), and adds the new
-   entries to `CHANGELOG.md`.
+   from the commit types above, sets `<version>` in the parent POM, the BOM and every module (the
+   project version is also written into exported contracts as `metadata.generator.version`, which the contract
+   check ignores), sets the SDK version the README and the examples name, and adds the new entries to
+   `CHANGELOG.md`.
 2. A maintainer ships a release by merging the release PR. Nothing is released until then, and the PR can wait
    while more changes land: it updates itself.
 3. Merging it tags the commit `vX.Y.Z` and creates the GitHub release with the changelog entries.

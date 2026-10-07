@@ -26,7 +26,7 @@ public final class DocuconfFileConverter implements GenericConverter {
     @Override
     public Object convert(Object source, TypeDescriptor sourceType, TypeDescriptor targetType) {
         if (source instanceof FileInput input) {
-            return files.get(input.name(), Object.class).orElse(null);
+            return files.value(input.name());
         }
         return null;
     }

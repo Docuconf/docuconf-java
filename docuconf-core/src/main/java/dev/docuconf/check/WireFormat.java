@@ -146,17 +146,17 @@ public final class WireFormat {
             default -> throw new IllegalArgumentException("unknown duration encoding " + enc);
         };
         if (nanos == null || nanos.abs().compareTo(MAX_DURATION_NANOS) > 0) {
-            throw new WireException(Code.INVALID_TYPE, "is not a duration " + hint(enc));
+            throw new WireException(Code.INVALID_TYPE, "is not a duration; " + hint(enc));
         }
         return Duration.ofNanos(nanos.longValue());
     }
 
     private static String hint(String encoding) {
         return switch (encoding) {
-            case "iso8601" -> "in ISO 8601 form such as PT90S";
-            case "seconds" -> "in seconds such as 90 or 1.5";
-            case "timespan" -> "of the form [d.]hh:mm:ss[.fff] such as 00:01:30";
-            default -> "such as 1m30s";
+            case "iso8601" -> "expected an ISO 8601 duration like PT30S";
+            case "seconds" -> "expected a number of seconds like 30 or 1.5";
+            case "timespan" -> "expected a timespan like 00:00:30 ([d.]hh:mm:ss[.fff])";
+            default -> "expected a Go duration like 30s or 1m30s";
         };
     }
 

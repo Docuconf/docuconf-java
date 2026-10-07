@@ -135,6 +135,7 @@ class StartupCheckTest {
                 "schema_mismatch routes",
                 "too_many_items SHOP_ORIGINS"), codes(e));
         String all = e.getMessage() + e.getViolations();
+        assertFalse(e.getMessage().contains("\n"), "the exception message is one line: " + e.getMessage());
         assertFalse(all.contains(ShopFixture.DB_SECRET), all);
         assertFalse(all.contains(ShopFixture.KS_PASSWORD), all);
         assertTrue(all.contains("[invalid_type] SHOP_PORT: is not a valid integer (got \"eighty\")"), all);
@@ -144,7 +145,8 @@ class StartupCheckTest {
         assertFalse(log.contains(ShopFixture.DB_SECRET));
 
         FailureAnalysis analysis = new DocuconfFailureAnalyzer().analyze(new IllegalStateException(e));
-        assertTrue(analysis.getDescription().contains("12 problems"), analysis.getDescription());
+        assertTrue(analysis.getDescription().startsWith("docuconf: 12 configuration problems:\n"),
+                analysis.getDescription());
         assertTrue(analysis.getDescription().contains("[too_many_items] SHOP_ORIGINS: has 4 items; at most 3 allowed"),
                 analysis.getDescription());
         assertFalse(analysis.getDescription().contains(ShopFixture.DB_SECRET));
@@ -164,6 +166,34 @@ class StartupCheckTest {
         assertEquals(List.of("out_of_range SHOP_SHARDS"), codes(fails()));
         shop.env.put("SHOP_SHARDS", "1,x");
         assertEquals(List.of("invalid_type SHOP_SHARDS"), codes(fails()));
+    }
+
+    @Test
+    void lengthLimitsCountCodePoints() throws Exception {
+        shop.env.put("SHOP_BRANCHES", "ZÜ01,日本,\uD83D\uDE80\uD83D\uDE80");
+        shop.env.put("SHOP_LIMITS", "{\"perMinute\":60,\"burst\":10}");
+        try (ConfigurableApplicationContext ctx = shop.run()) {
+            assertEquals(List.of("ZÜ01", "日本", "\uD83D\uDE80\uD83D\uDE80"), ctx.getBean(ShopProperties.class).branches());
+        }
+        shop.env.put("SHOP_BRANCHES", "BE,ZÜRICH");
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("out_of_range SHOP_BRANCHES"), codes(e));
+        assertTrue(e.getViolations().get(0).message().contains("6 characters, above itemMaxLength 4"),
+                e.getViolations().toString());
+        shop.env.put("SHOP_BRANCHES", "BE");
+        // A json value is measured as received, whitespace included.
+        shop.env.put("SHOP_LIMITS", "{ \"perMinute\": 60, \"burst\": 10 }");
+        assertEquals(List.of("out_of_range SHOP_LIMITS"), codes(fails()));
+    }
+
+    @Test
+    void nestedJsonIsMeasuredAsCompactJson() {
+        shop.env.put("SHOP_LIMITS_PERMINUTE", "123456789");
+        shop.env.put("SHOP_LIMITS_BURST", "123456789");
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("out_of_range SHOP_LIMITS"), codes(e));
+        assertTrue(e.getViolations().get(0).message().contains("41 characters of JSON, above maxLength 30"),
+                e.getViolations().toString());
     }
 
     @Test
@@ -207,9 +237,13 @@ class StartupCheckTest {
     }
 
     @Test
-    void enumValuesFromTheEnvironmentAreCaseSensitive() {
-        // The contract lists DEBUG, INFO, WARN; the platform rejects "warn", so the app does too.
+    void enumValuesBindInAnyCaseAsSpringDoes() {
+        // The platform checks the contract's spelling; the app accepts what Spring accepts, wherever it comes from.
         shop.env.put("SHOP_LEVEL", "warn");
+        try (ConfigurableApplicationContext ctx = shop.run()) {
+            assertEquals(ShopProperties.Level.WARN, ctx.getBean(ShopProperties.class).level());
+        }
+        shop.env.put("SHOP_LEVEL", "loud");
         assertEquals(List.of("not_in_enum SHOP_LEVEL"), codes(fails()));
     }
 
@@ -297,6 +331,7 @@ class StartupCheckTest {
         assertEquals(List.of("invalid_type SHOP_DATABASEURL", "invalid_type SHOP_KEYSTOREPASSWORD",
                 "keystore_unreadable partner"), codes(e));
         String all = e.getMessage() + e.getViolations();
+        assertFalse(e.getMessage().contains("\n"), "the exception message is one line: " + e.getMessage());
         assertTrue(all.contains("[invalid_type] SHOP_DATABASEURL: holds an unresolved vault: reference; the injector"
                 + " that should resolve it did not run"), all);
         assertTrue(all.contains("[invalid_type] SHOP_KEYSTOREPASSWORD: holds an unresolved op:// reference"), all);
@@ -312,8 +347,9 @@ class StartupCheckTest {
         shop.env.put("SHOP_KEYSTOREPASSWORD", ShopFixture.KS_PASSWORD);
         DocuconfValidationException vals = fails();
         assertEquals(List.of("invalid_type SHOP_DATABASEURL"), codes(vals));
-        assertTrue(vals.getMessage().contains("holds an unresolved ref+ reference"), vals.getMessage());
-        assertFalse(vals.getMessage().contains("shop/db"), vals.getMessage());
+        assertTrue(vals.getViolations().toString().contains("holds an unresolved ref+ reference"),
+                vals.getViolations().toString());
+        assertFalse(vals.getViolations().toString().contains("shop/db"), vals.getViolations().toString());
     }
 
     @Test
@@ -321,6 +357,6 @@ class StartupCheckTest {
         shop.env.put("SHOP_CONTACT", "vault:ops");
         DocuconfValidationException e = fails();
         assertEquals(List.of("invalid_type SHOP_CONTACT"), codes(e));
-        assertTrue(e.getMessage().contains("(@Email)"), e.getMessage());
+        assertTrue(e.getViolations().toString().contains("(@Email)"), e.getViolations().toString());
     }
 }

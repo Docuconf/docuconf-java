@@ -67,6 +67,31 @@ public class DocuconfStartupCheck implements BeanFactoryPostProcessor, Environme
         return PriorityOrdered.HIGHEST_PRECEDENCE;
     }
 
+    /**
+     * A contract exported from other {@code application*.yml} files than the ones the app ships fails a packaged app
+     * (the platform checked stale defaults) and warns in a development run, where only a rebuild is missing.
+     * {@code docuconf.stale-contract} is {@code auto} (that), {@code fail}, {@code warn} or {@code ignore}.
+     */
+    private void staleContracts() {
+        String mode = environment.getProperty("docuconf.stale-contract", "auto").trim().toLowerCase(java.util.Locale.ROOT);
+        if (mode.equals("ignore")) {
+            return;
+        }
+        List<StaleContracts.Stale> stale;
+        try {
+            stale = StaleContracts.find(classLoader);
+        } catch (IOException | RuntimeException e) {
+            LOG.debug("docuconf: could not compare the contract with application*.yml", e);
+            return;
+        }
+        for (StaleContracts.Stale s : stale) {
+            if (mode.equals("fail") || (mode.equals("auto") && s.inJar())) {
+                throw new DocuconfStaleContractException(s.message());
+            }
+            LOG.warn(s.message());
+        }
+    }
+
     @Override
     public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
         List<ContractBundle> bundles;
@@ -75,6 +100,7 @@ public class DocuconfStartupCheck implements BeanFactoryPostProcessor, Environme
         } catch (IOException e) {
             throw new UncheckedIOException("docuconf: cannot read META-INF/docuconf/contract.json", e);
         }
+        staleContracts();
         if (bundles.isEmpty()) {
             LOG.warn("docuconf: no META-INF/docuconf/contract.json on the class path; is docuconf-processor"
                     + " configured as an annotation processor?");

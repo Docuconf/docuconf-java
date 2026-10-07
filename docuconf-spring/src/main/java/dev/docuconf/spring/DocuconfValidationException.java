@@ -33,12 +33,12 @@ public class DocuconfValidationException extends RuntimeException {
         return violations;
     }
 
+    /**
+     * One line, so Spring's "cancelling refresh attempt" warning does not print every problem a second time; the
+     * list is in {@link #getViolations()} and in the startup failure report.
+     */
     private static String message(List<Violation> violations) {
-        StringBuilder b = new StringBuilder("docuconf: ").append(violations.size())
-                .append(violations.size() == 1 ? " configuration problem" : " configuration problems");
-        for (Violation v : violations) {
-            b.append("\n  ").append(v);
-        }
-        return b.toString();
+        return "docuconf: " + violations.size() + (violations.size() == 1 ? " configuration problem"
+                : " configuration problems") + " (listed in the startup failure report)";
     }
 }

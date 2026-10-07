@@ -135,7 +135,7 @@ class OverlayTest {
         DocuconfValidationException e = fails();
         assertEquals(List.of("invalid_type SHOP_TIMEOUT", "not_in_enum SHOP_LEVEL", "out_of_range SHOP_PORT"),
                 codes(e));
-        assertTrue(e.getMessage().contains("SHOP_PORT: is above max 65535 (got 70000)"), e.getMessage());
+        assertTrue(e.getViolations().toString().contains("SHOP_PORT: is above max 65535 (got 70000)"), e.getViolations().toString());
     }
 
     @Test

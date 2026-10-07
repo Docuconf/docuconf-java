@@ -43,6 +43,9 @@ public final class ContractJson {
         b.put("classes", classes);
         b.put("vars", props(bundle.bindings().vars));
         b.put("files", props(bundle.bindings().files));
+        if (bundle.bindings().springFiles != null) {
+            b.put("springFiles", new java.util.TreeMap<>(bundle.bindings().springFiles));
+        }
         root.put("bindings", b);
         return Json.writePretty(root);
     }
@@ -134,6 +137,8 @@ public final class ContractJson {
         put(m, "maxItems", v.maxItems);
         put(m, "itemMin", v.itemMin);
         put(m, "itemMax", v.itemMax);
+        put(m, "itemMinLength", v.itemMinLength);
+        put(m, "itemMaxLength", v.itemMaxLength);
         put(m, "schema", v.schema);
         put(m, "default", v.defaultValue);
         return m;
@@ -236,6 +241,10 @@ public final class ContractJson {
         }
         readProps((List<Object>) b.getOrDefault("vars", List.of()), bindings.vars);
         readProps((List<Object>) b.getOrDefault("files", List.of()), bindings.files);
+        if (b.get("springFiles") instanceof Map<?, ?> hashes) {
+            bindings.springFiles = new java.util.TreeMap<>();
+            hashes.forEach((k, v) -> bindings.springFiles.put((String) k, (String) v));
+        }
         return new ContractBundle(c, bindings);
     }
 
@@ -291,6 +300,8 @@ public final class ContractJson {
             v.maxItems = integer(vm.get("maxItems"));
             v.itemMin = longValue(vm.get("itemMin"));
             v.itemMax = longValue(vm.get("itemMax"));
+            v.itemMinLength = integer(vm.get("itemMinLength"));
+            v.itemMaxLength = integer(vm.get("itemMaxLength"));
             v.schema = (Map<String, Object>) vm.get("schema");
             v.defaultValue = vm.get("default");
             c.vars.put(name, v);

@@ -6,10 +6,14 @@ import dev.docuconf.BinaryFile;
 import dev.docuconf.ConfigFile;
 import dev.docuconf.ConfigOverlay;
 import dev.docuconf.Docuconf;
+import dev.docuconf.EnumCase;
+import dev.docuconf.EnumValues;
 import dev.docuconf.Json;
 import dev.docuconf.KeyAlgorithm;
 import dev.docuconf.Keystore;
 import dev.docuconf.KeystoreFile;
+import dev.docuconf.MaxLength;
+import dev.docuconf.Redacted;
 import dev.docuconf.Reload;
 import dev.docuconf.Secret;
 import dev.docuconf.TextFile;
@@ -43,6 +47,7 @@ import org.springframework.validation.annotation.Validated;
  * @param shards Shard ids this instance owns
  * @param level Minimum log level
  * @param limits Default per-client rate limits
+ * @param branches Branch codes, two to four characters each
  * @param contact Operator contact address
  * @param tls Certificate the shop serves HTTPS with
  * @param routes Routing table
@@ -51,6 +56,8 @@ import org.springframework.validation.annotation.Validated;
  * @param partner Client certificate for the partner API
  * @param trusted Private CAs to trust
  * @param geo GeoIP database
+ * @param alertEmail Where security alerts go
+ * @param mode Checkout mode
  */
 @Docuconf(service = "shop")
 @ConfigOverlay(value = "/etc/shop/overlay/shop.yaml", description = "Platform overrides, layered over application.yml")
@@ -63,7 +70,8 @@ public record ShopProperties(
         @Size(max = 3) List<String> origins,
         List<@Min(0) @Max(1023) Integer> shards,
         @DefaultValue("INFO") Level level,
-        @Json RateLimits limits,
+        @Json @MaxLength(30) RateLimits limits,
+        List<@Size(min = 2, max = 4) String> branches,
         @Email String contact,
         @NotNull @TlsFile(value = "/etc/shop/tls", dnsNames = "shop.internal", minRemaining = "720h",
                 keyAlgorithms = {KeyAlgorithm.ECDSA, KeyAlgorithm.RSA}) TlsKeyPair tls,
@@ -73,7 +81,17 @@ public record ShopProperties(
         @KeystoreFile(value = "/etc/shop/partner/keystore.p12", passwordProperty = "keystorePassword")
         Keystore partner,
         @CaBundleFile(value = "/etc/shop/ca/bundle.pem", pathEnv = "SHOP_CA_FILE") CaBundle trusted,
-        @BinaryFile("/data/geo/db.mmdb") Path geo) {
+        @BinaryFile("/data/geo/db.mmdb") Path geo,
+        @Secret @Email String alertEmail,
+        @EnumValues(EnumCase.LOWER) @DefaultValue("FAST") Mode mode) {
+
+    @Override
+    public String toString() {
+        return Redacted.toString(this);
+    }
+
+    /** Checkout modes. */
+    public enum Mode { FAST, SAFE }
 
     /** Log levels. */
     public enum Level { DEBUG, INFO, WARN }

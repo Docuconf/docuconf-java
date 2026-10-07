@@ -76,7 +76,7 @@ public final class DeclarationValidator {
         }
         if (Names.FEATURE_FLAG.matcher(n).find()) {
             warnings.add(n + ": looks like a feature flag; flags that change without a rollout belong in a flag"
-                    + " service (SPEC §10)");
+                    + " service (SPEC section 10)");
         }
         description(n, v.description);
         if (v.required && v.defaultValue != null) {
@@ -96,6 +96,26 @@ public final class DeclarationValidator {
         }
         if (v.minLength != null && v.maxLength != null && v.minLength > v.maxLength) {
             errors.add(n + ": minLength is greater than maxLength");
+        }
+        // Lengths count characters (SPEC §4.3): minLength on a string, maxLength on a string, url or json, and
+        // itemMinLength/itemMaxLength on each item of a string list.
+        if (v.minLength != null && v.type != VarType.STRING) {
+            errors.add(n + ": minLength only applies to strings");
+        }
+        if (v.maxLength != null && v.type != VarType.STRING && v.type != VarType.URL && v.type != VarType.JSON) {
+            errors.add(n + ": maxLength only applies to strings, urls and json");
+        }
+        for (Integer len : new Integer[] {v.minLength, v.maxLength, v.itemMinLength, v.itemMaxLength}) {
+            if (len != null && len < 0) {
+                errors.add(n + ": a length limit cannot be negative (got " + len + ")");
+            }
+        }
+        if ((v.itemMinLength != null || v.itemMaxLength != null)
+                && !(v.type == VarType.LIST && "string".equals(v.items))) {
+            errors.add(n + ": itemMinLength and itemMaxLength only apply to lists of strings");
+        }
+        if (v.itemMinLength != null && v.itemMaxLength != null && v.itemMinLength > v.itemMaxLength) {
+            errors.add(n + ": itemMinLength is greater than itemMaxLength");
         }
         if (v.minItems != null && v.maxItems != null && v.minItems > v.maxItems) {
             errors.add(n + ": minItems is greater than maxItems");

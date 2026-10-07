@@ -41,4 +41,9 @@ public final class Bindings {
     public final Map<String, PropertyBinding> vars = new TreeMap<>();
     /** File inputs, by input name. */
     public final Map<String, PropertyBinding> files = new TreeMap<>();
+    /**
+     * The {@code application*.yml} files the contract was exported from, by name relative to the resources root,
+     * with their SHA-256 ({@link SpringFileHashes}); {@code null} in contracts written before this was recorded.
+     */
+    public Map<String, String> springFiles;
 }

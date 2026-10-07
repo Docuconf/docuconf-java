@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      docuconf_go_ref:
+        description: docuconf-go ref to test against (empty = .github/docuconf-go.ref)
+        required: false
+        default: ""
+  # Nightly against docuconf-go main, to catch spec changes before a bump PR.
+  schedule:
+    - cron: "23 5 * * *"
 
 permissions:
   contents: read
@@ -22,14 +31,27 @@ jobs:
           - java: "21"
             spring-boot: "4.1.1"
     name: Java ${{ matrix.java }}, Spring Boot ${{ matrix.spring-boot }}
+    env:
+      MAVEN_ARGS: -B -ntp
     steps:
       - uses: actions/checkout@v4
 
       # The contract meta-schema (spec/cue) and the conformance suite (conformance/cases.json) live in docuconf-go.
-      - uses: actions/checkout@v4
+      - name: Pick the docuconf-go ref
+        id: dcref
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.docuconf_go_ref }}
+        run: |
+          if [ "$EVENT" = schedule ]; then echo "ref=main" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT_REF" ]; then echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+          else echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"; fi
+      - name: Check out docuconf-go
+        uses: actions/checkout@v4
         with:
           repository: docuconf/docuconf-go
           path: docuconf-go
+          ref: ${{ steps.dcref.outputs.ref }}
 
       - uses: actions/setup-java@v4
         with:
@@ -45,8 +67,14 @@ jobs:
       - name: Install cue
         run: go install cuelang.org/go/cmd/cue@v0.17.1
 
+      # The docuconf-go-facing subset (conformance suite, cue vet of exported
+      # contracts); docuconf-go's downstream workflow runs the same script.
+      - name: Run scripts/conformance.sh
+        run: scripts/conformance.sh
+        env:
+          DOCUCONF_GO_DIR: ${{ github.workspace }}/docuconf-go
       - name: Build and test
-        run: mvn -B -ntp verify -Dspring-boot.version=${{ matrix.spring-boot }}
+        run: mvn verify -Dspring-boot.version=${{ matrix.spring-boot }}
         env:
           DOCUCONF_SPEC_CUE: ${{ github.workspace }}/docuconf-go/spec/cue
           DOCUCONF_REQUIRE_VET: "1"
@@ -54,12 +82,17 @@ jobs:
           DOCUCONF_CONFORMANCE: ${{ github.workspace }}/docuconf-go/conformance/cases.json
           DOCUCONF_REQUIRE_CONFORMANCE: "1"
 
-      # The orders example (examples/orders), built by the step above as a module of the reactor.
-      # metadata.generator.version (the project version) is ignored: release PRs bump it.
-      - name: "Example: the committed contract is the exported one"
-        run: |
-          cp examples/orders/target/classes/META-INF/docuconf/contract.cue examples/orders/contract.cue
-          scripts/check-generated.sh examples/orders/contract.cue
+      # README step 1: install the SDK from source, for the examples, which are ordinary user projects.
+      - name: Install the SDK as the README says
+        run: mvn install -DskipTests -Dspring-boot.version=${{ matrix.spring-boot }}
+
+      # README steps 3 to 6, as written (mvn package, run, see an error, docuconf:export, mvn verify with the
+      # contract check and the example's tests).
+      - name: "Example: the README quickstart"
+        run: examples/orders/quickstart.sh
+
+      - name: "Example: Spring's configuration processor still runs next to docuconf's"
+        run: test -f examples/orders/target/classes/META-INF/spring-configuration-metadata.json
 
       - name: "Example: cue vet the contract"
         run: |
@@ -72,6 +105,16 @@ jobs:
       - name: "Example: smoke test"
         run: examples/orders/smoke.sh
 
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      # The README's Gradle setup: the same sources, the compileJava input and the contract tasks.
+      - name: "Example: Gradle build and contract check"
+        run: |
+          gradle -p examples/orders-gradle check
+          diff examples/orders/contract.cue examples/orders-gradle/contract.cue
+
       - name: Check the release build (sources, javadoc) without signing
         if: matrix.java == '21' && matrix.spring-boot == '3.5.16'
-        run: mvn -B -ntp -Prelease -DskipTests -Dgpg.skip package
+        run: mvn -Prelease -DskipTests -Dgpg.skip package

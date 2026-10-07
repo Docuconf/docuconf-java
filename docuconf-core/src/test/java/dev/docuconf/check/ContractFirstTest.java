@@ -75,7 +75,7 @@ class ContractFirstTest {
         ContractFirst.InvalidConfigurationException e = assertThrows(
                 ContractFirst.InvalidConfigurationException.class, r::require);
         assertFalse(e.getMessage().contains("short-secret-value"), e.getMessage());
-        assertTrue(e.getMessage().contains("5 problems"), e.getMessage());
+        assertTrue(e.getMessage().startsWith("docuconf: 5 configuration problems:"), e.getMessage());
     }
 
     @Test
@@ -213,5 +213,52 @@ class ContractFirstTest {
         assertTrue(all.contains("$.mode: matches 0 of the oneOf"), all);
         assertTrue(all.contains("$: property extra is not allowed"), all);
         assertFalse(all.contains("ABCDEFG"), all);
+    }
+
+    private static final String LENGTHS = """
+            {"apiVersion": "docuconf.dev/v1alpha1", "kind": "ConfigContract", "metadata": {"name": "svc"},
+             "vars": {
+               "CALLBACK": {"type": "url", "description": "Where to report each run", "schemes": ["https"],
+                            "maxLength": 24},
+               "LIMITS": {"type": "json", "description": "Run limits", "maxLength": 16},
+               "BRANCHES": {"type": "list", "description": "Branch codes", "items": "string", "encoding": "csv",
+                            "itemMinLength": 2, "itemMaxLength": 4},
+               "IDX": {"type": "list", "description": "Branch codes", "items": "string", "encoding": "indexed",
+                       "itemMaxLength": 4},
+               "DB_URL": {"type": "url", "description": "Database URL", "secret": true, "maxLength": 30}}}
+            """;
+
+    @Test
+    void lengthLimitsCountCodePoints() {
+        ContractFirst.Result ok = ContractFirst.load(LENGTHS, Map.of(
+                "CALLBACK", "https://例え.jp/日本語の道/一二三四",
+                "LIMITS", "{\"n\":\"日本語の道路xy\"}",
+                "BRANCHES", "ZÜ01,日本,\uD83D\uDE80\uD83D\uDE80",
+                "IDX__0", "BE"));
+        assertTrue(ok.ok(), ok.violations().toString());
+        assertEquals(List.of("ZÜ01", "日本", "\uD83D\uDE80\uD83D\uDE80"), ok.require().get("BRANCHES"));
+
+        ContractFirst.Result bad = ContractFirst.load(LENGTHS, Map.of(
+                "CALLBACK", "https://a.example/runs/42",
+                "LIMITS", "{ \"max\": 123456 }",
+                "BRANCHES", "BE,B",
+                "IDX__0", "GENEVA",
+                "DB_URL", "postgres://app:s3cr3t@db:5432/app"));
+        List<String> codes = bad.violations().stream().map(x -> x.code().id() + " " + x.input()).sorted().toList();
+        assertEquals(List.of("out_of_range BRANCHES", "out_of_range CALLBACK", "out_of_range DB_URL",
+                "out_of_range IDX", "out_of_range LIMITS"), codes);
+        String message = bad.violations().toString();
+        assertFalse(message.contains("s3cr3t"), message);
+        assertTrue(message.contains("is 33 characters, above maxLength 30"), message);
+        assertTrue(message.contains("is 17 characters of JSON, above maxLength 16"), message);
+    }
+
+    @Test
+    void itemLengthsOnAnIntListAreAnInvalidContract() {
+        String bad = LENGTHS.replace("\"items\": \"string\", \"encoding\": \"csv\"", "\"items\": \"int\", \"encoding\": \"csv\"");
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> ContractFirst.load(bad, Map.of()));
+        assertTrue(e.getMessage().contains("BRANCHES: itemMinLength and itemMaxLength only apply to lists of strings"),
+                e.getMessage());
     }
 }
