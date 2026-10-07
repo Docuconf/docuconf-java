@@ -55,10 +55,11 @@ jobs:
           DOCUCONF_REQUIRE_CONFORMANCE: "1"
 
       # The orders example (examples/orders), built by the step above as a module of the reactor.
+      # metadata.generator.version (the project version) is ignored: release PRs bump it.
       - name: "Example: the committed contract is the exported one"
         run: |
           cp examples/orders/target/classes/META-INF/docuconf/contract.cue examples/orders/contract.cue
-          git diff --exit-code -- examples/orders/contract.cue
+          scripts/check-generated.sh examples/orders/contract.cue
 
       - name: "Example: cue vet the contract"
         run: |
