@@ -9,6 +9,8 @@ files, licence files and binary data.
 Part of [docuconf](https://github.com/docuconf). See the
 [specification](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md).
 
+**Example:** [`examples/orders/`](examples/orders/), a small Spring Boot web service with its exported contract.
+
 > **Status:** `0.1.0`, not yet published. The contract format is a draft (`v1alpha1`) and the API may change.
 > The Maven groupId `dev.docuconf` assumes the `docuconf.dev` domain; that namespace is **not yet verified** on
 > Maven Central (see [RELEASING.md](RELEASING.md)).

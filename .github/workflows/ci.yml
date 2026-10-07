@@ -54,6 +54,23 @@ jobs:
           DOCUCONF_CONFORMANCE: ${{ github.workspace }}/docuconf-go/conformance/cases.json
           DOCUCONF_REQUIRE_CONFORMANCE: "1"
 
+      # The orders example (examples/orders), built by the step above as a module of the reactor.
+      - name: "Example: the committed contract is the exported one"
+        run: |
+          cp examples/orders/target/classes/META-INF/docuconf/contract.cue examples/orders/contract.cue
+          git diff --exit-code -- examples/orders/contract.cue
+
+      - name: "Example: cue vet the contract"
+        run: |
+          work=$(mktemp -d)
+          cp -r docuconf-go/spec/cue/cue.mod docuconf-go/spec/cue/contract "$work"/
+          mkdir "$work/svc"
+          cp examples/orders/contract.cue "$work/svc/"
+          cd "$work" && "$(go env GOPATH)/bin/cue" vet -c ./svc
+
+      - name: "Example: smoke test"
+        run: examples/orders/smoke.sh
+
       - name: Check the release build (sources, javadoc) without signing
         if: matrix.java == '21' && matrix.spring-boot == '3.5.16'
         run: mvn -B -ntp -Prelease -DskipTests -Dgpg.skip package
