@@ -1436,10 +1436,25 @@ public final class DocuconfProcessor extends AbstractProcessor {
      * so every docuconf diagnostic has a file and line an IDE can jump to.
      */
     private void print(Diagnostic.Kind kind, Element e, String message) {
-        Element at = e != null ? e : firstClass();
+        Element at = e != null ? positioned(e) : firstClass();
         if (reported.add(kind + "|" + message)) {
             processingEnv.getMessager().printMessage(kind, message, at);
         }
+    }
+
+    /**
+     * JDK 17's javac cannot find the source position of a record component, so a diagnostic on one has no file or
+     * line; the component's private field, which javac declares at the same place, has them on every JDK.
+     */
+    private static Element positioned(Element e) {
+        if (e.getKind() == ElementKind.RECORD_COMPONENT && e.getEnclosingElement() != null) {
+            for (VariableElement f : ElementFilter.fieldsIn(e.getEnclosingElement().getEnclosedElements())) {
+                if (f.getSimpleName().contentEquals(e.getSimpleName())) {
+                    return f;
+                }
+            }
+        }
+        return e;
     }
 
     private Element firstClass() {
