@@ -47,3 +47,68 @@ requires).
 ```sh
 mvn -Prelease -DskipTests -Dgpg.skip package    # sources and javadoc jars build, nothing is signed or uploaded
 ```
+
+## GitHub Packages and Releases
+
+The `github` job in `.github/workflows/release.yml` runs on the same `v*` tags. It sets the version from the tag and
+runs `mvn -Pgithub deploy` (which runs the tests, with `cue vet` and the conformance suite) against
+`https://maven.pkg.github.com/Docuconf/docuconf-java`, then:
+
+- GitHub Packages gets `dev.docuconf:docuconf-parent`, `docuconf-core`, `docuconf-processor` and `docuconf-spring`,
+  each with sources and javadoc jars. They are not GPG-signed. `docuconf-sample` and `examples/orders` set
+  `maven.deploy.skip` and are never deployed;
+- the GitHub Release for the tag is created if it does not exist, and gets the core, processor and spring jars
+  (with their sources, javadoc and test jars).
+
+The `github` profile in `pom.xml` only adds the sources and javadoc jars; the target repository comes from
+`-DaltDeploymentRepository=github::https://maven.pkg.github.com/Docuconf/docuconf-java`, and `actions/setup-java`
+writes a `<server id="github">` with the workflow's `GITHUB_TOKEN`. The job does not depend on the Maven Central
+`publish` job, so it works before the Central Portal namespace, token, GPG key and `maven-central` environment exist.
+There are no secrets or accounts to set up (`packages: write`, `contents: write` only). The only requirement is that
+the `Docuconf` organization lets `GITHUB_TOKEN` write packages, which it does unless package creation has been
+restricted under Organization settings > Packages.
+
+### Installing from GitHub Packages
+
+GitHub's Maven registry requires a token even for public packages. Create a personal access token (classic) with the
+`read:packages` scope and add it to `~/.m2/settings.xml`:
+
+```xml
+<settings>
+  <servers>
+    <server>
+      <id>github-docuconf</id>
+      <username>YOUR_GITHUB_USERNAME</username>
+      <password>${env.GITHUB_TOKEN}</password>
+    </server>
+  </servers>
+</settings>
+```
+
+Then add the repository to your `pom.xml` (the `<id>` must match the server's):
+
+```xml
+<repositories>
+  <repository>
+    <id>github-docuconf</id>
+    <url>https://maven.pkg.github.com/Docuconf/docuconf-java</url>
+  </repository>
+</repositories>
+```
+
+and depend on `dev.docuconf:docuconf-spring` (or `docuconf-core` / `docuconf-processor`) as usual. With Gradle:
+
+```kotlin
+repositories {
+    maven("https://maven.pkg.github.com/Docuconf/docuconf-java") {
+        credentials {
+            username = providers.environmentVariable("GITHUB_ACTOR").orNull ?: "YOUR_GITHUB_USERNAME"
+            password = providers.environmentVariable("GITHUB_TOKEN").get()
+        }
+    }
+}
+```
+
+Without a token, download the jars from the GitHub Release and install them into your local repository, for example
+`mvn install:install-file -Dfile=docuconf-core-0.1.0.jar -DgroupId=dev.docuconf -DartifactId=docuconf-core
+-Dversion=0.1.0 -Dpackaging=jar`.
