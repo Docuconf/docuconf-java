@@ -6,6 +6,7 @@ import java.math.BigInteger;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -322,5 +323,41 @@ public final class WireFormat {
      */
     public static String indexedName(String name, int index) {
         return name + "__" + index;
+    }
+    /**
+     * Whether an indexed list suffix is an item index (SPEC §5): a decimal number with no leading zero.
+     *
+     * @param suffix the text after {@code NAME__}
+     * @return whether it names an item
+     */
+    public static boolean isIndex(String suffix) {
+        if (suffix.isEmpty() || (suffix.length() > 1 && suffix.charAt(0) == '0')) {
+            return false;
+        }
+        for (int i = 0; i < suffix.length(); i++) {
+            if (suffix.charAt(i) < '0' || suffix.charAt(i) > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Describes a gap in an indexed list (SPEC §5): its items must be numbered from 0 with no gap.
+     *
+     * @param prefix the item name before the index, such as {@code NAME__}
+     * @param indices the indices that are set, each one {@link #isIndex(String) an index}
+     * @return the message, naming the first missing item and the highest one that is set
+     */
+    public static String gapMessage(String prefix, Collection<String> indices) {
+        int missing = 0;
+        while (indices.contains(Integer.toString(missing))) {
+            missing++;
+        }
+        String highest = indices.stream()
+                .max((a, b) -> a.length() != b.length() ? Integer.compare(a.length(), b.length()) : a.compareTo(b))
+                .orElse("0");
+        return "is an indexed list with a gap: " + prefix + highest + " is set but " + prefix + missing
+                + " is not; number the items from 0 with no gap";
     }
 }

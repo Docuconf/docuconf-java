@@ -79,6 +79,29 @@ class ContractFirstTest {
     }
 
     @Test
+    void indexedItemsAreNumberedFromZeroWithNoGap() throws Exception {
+        Files.createDirectories(tmp.resolve("etc/orders/rules"));
+        Files.writeString(tmp.resolve("etc/orders/rules/rules.json"), "{\"routes\":[]}");
+        Map<String, String> base = Map.of("TOKEN", "tok_0123456789abcdefghij", "DOCUCONF_FILE_ROOT", tmp.toString());
+        for (Map<String, String> shards : List.of(Map.of("SHARDS__0", "1", "SHARDS__2", "3"),
+                Map.of("SHARDS__1", "2"))) {
+            Map<String, String> env = new java.util.HashMap<>(base);
+            env.putAll(shards);
+            List<Violation> found = ContractFirst.load(CONTRACT, env).violations();
+            assertEquals(1, found.size(), found.toString());
+            assertEquals(Code.INVALID_TYPE, found.get(0).code());
+            assertTrue(found.get(0).message().contains("SHARDS__0") || found.get(0).message().contains("SHARDS__1"),
+                    found.get(0).message());
+        }
+        // Only decimal indices with no leading zero are items: SHARDS__01 and SHARDS__HOST are other variables.
+        Map<String, String> env = new java.util.HashMap<>(base);
+        env.putAll(Map.of("SHARDS__0", "7", "SHARDS__01", "8", "SHARDS__HOST", "x"));
+        ContractFirst.Result r = ContractFirst.load(CONTRACT, env);
+        assertTrue(r.ok(), r.violations().toString());
+        assertEquals(List.of(7L), r.require().get("SHARDS"));
+    }
+
+    @Test
     void rejectsAnInvalidContract() {
         String bad = CONTRACT.replace("\"default\": 8080", "\"default\": 70000");
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,

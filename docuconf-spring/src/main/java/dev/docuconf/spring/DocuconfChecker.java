@@ -35,6 +35,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.boot.context.properties.bind.BindContext;
 import org.springframework.boot.context.properties.bind.BindHandler;
 import org.springframework.boot.context.properties.bind.BindResult;
@@ -50,6 +52,7 @@ import org.springframework.core.ResolvableType;
 import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.core.env.ConfigurableEnvironment;
+import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.env.StandardEnvironment;
@@ -344,6 +347,11 @@ public final class DocuconfChecker {
             out.add(reference);
             return out;
         }
+        Violation gap = v.type == VarType.LIST ? indexedGap(v) : null;
+        if (gap != null) {
+            out.add(gap);
+            return out;
+        }
         boolean empty = raw != null && raw.isEmpty();
         if (empty && v.type != VarType.STRING) {
             raw = null; // SPEC §5: empty means unset for every type but string.
@@ -553,6 +561,46 @@ public final class DocuconfChecker {
             any |= !t.isEmpty();
         }
         return any;
+    }
+
+    /**
+     * SPEC §5: list items given one per variable must be numbered from 0 with no gap. Spring's relaxed binding reads
+     * {@code NAME_0}, {@code NAME__0} and {@code NAME_0_} as items of the list; when the plain {@code NAME} is not
+     * set it binds them, and on a gap or a leading zero it fails with a message that does not say why. This names
+     * the problem first.
+     */
+    private Violation indexedGap(VarSpec v) {
+        PropertySource<?> env = environment.getPropertySources()
+                .get(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+        if (!(env instanceof EnumerablePropertySource<?> system)) {
+            return null;
+        }
+        Object plain = system.getProperty(v.name);
+        if (plain != null && !plain.toString().isEmpty()) {
+            return null; // Spring reads the comma-separated form and ignores the items.
+        }
+        Pattern item = Pattern.compile(Pattern.quote(v.name) + "(_{1,2})([0-9]+)_?", Pattern.CASE_INSENSITIVE);
+        String prefix = null;
+        Set<String> indices = new HashSet<>();
+        for (String name : system.getPropertyNames()) {
+            Matcher m = item.matcher(name);
+            if (!m.matches()) {
+                continue;
+            }
+            String index = m.group(2);
+            if (!WireFormat.isIndex(index)) {
+                return new Violation(Code.INVALID_TYPE, v.name, "has an item " + name
+                        + " whose index has a leading zero; number the items 0, 1, 2, ...");
+            }
+            prefix = prefix == null ? v.name + m.group(1) : prefix;
+            indices.add(index);
+        }
+        for (int i = 0; i < indices.size(); i++) {
+            if (!indices.contains(Integer.toString(i))) {
+                return new Violation(Code.INVALID_TYPE, v.name, WireFormat.gapMessage(prefix, indices));
+            }
+        }
+        return null;
     }
 
     private static String javaType(Bindings.PropertyBinding b) {
