@@ -705,6 +705,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
         VarSpec v = new VarSpec(envName, kind.type(), description(a, p.doc()));
         v.configKey = configKey;
         v.secret = a.containsKey(D + "Secret");
+        if (v.secret) {
+            secretToString(p, envName);
+        }
         v.group = group;
         AnnotationMirror ex = a.get(D + "Examples");
         if (ex != null) {
@@ -891,6 +894,42 @@ public final class DocuconfProcessor extends AbstractProcessor {
         return d != null ? Mirrors.string(elements, d, "value") : doc;
     }
 
+    private final Set<String> toStringChecked = new java.util.HashSet<>();
+
+    /**
+     * Secrets must never print by accident: a record's generated {@code toString()} and Lombok's print every
+     * property, so a class holding a {@code @Secret} must print it some other way.
+     */
+    private void secretToString(Prop p, String input) {
+        Element owner = p.element().getEnclosingElement();
+        if (owner instanceof ExecutableElement ctor) {
+            owner = ctor.getEnclosingElement();
+        }
+        if (!(owner instanceof TypeElement te)) {
+            return;
+        }
+        String fix = "; override it: `@Override public String toString() { return Redacted.toString(this); }`"
+                + " (dev.docuconf.Redacted prints secrets as [redacted])";
+        boolean ownToString = ElementFilter.methodsIn(te.getEnclosedElements()).stream()
+                .anyMatch(m -> m.getSimpleName().contentEquals("toString") && m.getParameters().isEmpty()
+                        && elements.getOrigin(m) == Elements.Origin.EXPLICIT
+                        && (initializers == null || initializers.inSource(m)));
+        if (te.getKind() == ElementKind.RECORD && !ownToString) {
+            if (!toStringChecked.add(te.getQualifiedName().toString())) {
+                return;
+            }
+            error(te, input + ": " + te.getSimpleName() + " is a record, and its generated toString() prints @Secret "
+                    + p.javaName() + fix);
+            return;
+        }
+        boolean lombok = annotation(te, "lombok.Data") != null || annotation(te, "lombok.Value") != null
+                || annotation(te, "lombok.ToString") != null;
+        if (lombok && !ownToString && annotation(p.element(), "lombok.ToString.Exclude") == null) {
+            error(te, input + ": Lombok's toString() for " + te.getSimpleName() + " prints @Secret " + p.javaName()
+                    + "; mark the field @ToString.Exclude" + fix.replace("; override it:", ", or override it:"));
+        }
+    }
+
     /** The environment variable for a property, in the naming its root class chose. */
     private String envName(String root, String configKey) {
         String[] s = settings.get(root);
@@ -972,6 +1011,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
         Constraints c = Constraints.read(elements, a);
         f.required = c.requiresValue();
         f.secret = f.secret || a.containsKey(D + "Secret");
+        if (a.containsKey(D + "Secret") && (type == FileType.TEXT || type == FileType.CONFIG)) {
+            secretToString(p, name);
+        }
         f.group = group;
         f.deprecated = deprecation(root, a);
         String pathEnv = Mirrors.string(elements, m, "pathEnv");

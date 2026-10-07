@@ -188,4 +188,56 @@ class DeclarationDiagnosticsTest {
         assertTrue(bad.allErrors().contains("SVC_ALLOWED_ORIGINS is declared twice: svc.allowed-origins and"
                 + " svc.allowed.origins both map to it"), bad.allErrors());
     }
+
+    @Test
+    void aRecordHoldingASecretMustNotUseItsGeneratedToString() throws Exception {
+        String bad = IMPORTS + """
+                @Docuconf(service = "svc")
+                @ConfigurationProperties("svc")
+                public record SvcProperties(@Description("API token") @Secret String token) {}
+                """;
+        Compilation c = Compilation.compile(tmp.resolve("bad"), Map.of(), Map.of("demo.SvcProperties", bad));
+        assertFalse(c.success);
+        assertTrue(c.allErrors().contains("SVC_TOKEN: SvcProperties is a record, and its generated toString() prints"
+                + " @Secret token; override it: `@Override public String toString() { return Redacted.toString(this);"
+                + " }`"), c.allErrors());
+
+        String good = bad.replace("String token) {}", """
+                String token) {
+                    @Override
+                    public String toString() {
+                        return Redacted.toString(this);
+                    }
+                }""");
+        Compilation ok = Compilation.compile(tmp.resolve("good"), Map.of(), Map.of("demo.SvcProperties", good));
+        assertTrue(ok.success, ok.allErrors());
+    }
+
+    @Test
+    void lombokToStringMustExcludeSecrets() throws Exception {
+        Map<String, String> lombok = Map.of(
+                "lombok.Data", "package lombok; public @interface Data {}",
+                "lombok.ToString", "package lombok; public @interface ToString { @interface Exclude {} }");
+        String bean = IMPORTS + """
+                @lombok.Data
+                @Docuconf(service = "svc")
+                @ConfigurationProperties("svc")
+                public class SvcProperties {
+                    /** API token for the upstream */
+                    @Secret EXCLUDE private String token;
+                    public String getToken() { return token; }
+                    public void setToken(String token) { this.token = token; }
+                }
+                """;
+        Map<String, String> sources = new java.util.HashMap<>(lombok);
+        sources.put("demo.SvcProperties", bean.replace("EXCLUDE ", ""));
+        Compilation c = Compilation.compile(tmp.resolve("bad"), Map.of(), sources);
+        assertFalse(c.success);
+        assertTrue(c.allErrors().contains("SVC_TOKEN: Lombok's toString() for SvcProperties prints @Secret token;"
+                + " mark the field @ToString.Exclude"), c.allErrors());
+
+        sources.put("demo.SvcProperties", bean.replace("EXCLUDE", "@lombok.ToString.Exclude"));
+        Compilation ok = Compilation.compile(tmp.resolve("good"), Map.of(), sources);
+        assertTrue(ok.success, ok.allErrors());
+    }
 }
