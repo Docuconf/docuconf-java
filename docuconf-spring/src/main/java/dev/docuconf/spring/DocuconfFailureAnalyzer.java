@@ -13,9 +13,9 @@ public class DocuconfFailureAnalyzer extends AbstractFailureAnalyzer<DocuconfVal
 
     @Override
     protected FailureAnalysis analyze(Throwable rootFailure, DocuconfValidationException cause) {
-        StringBuilder description = new StringBuilder("The configuration does not satisfy the docuconf contract (")
-                .append(cause.getViolations().size()).append(cause.getViolations().size() == 1 ? " problem" : " problems")
-                .append("):\n");
+        int n = cause.getViolations().size();
+        StringBuilder description = new StringBuilder("docuconf: ").append(n)
+                .append(n == 1 ? " configuration problem:\n" : " configuration problems:\n");
         for (Violation v : cause.getViolations()) {
             description.append("\n    [").append(v.code().id()).append("] ").append(v.input()).append(": ")
                     .append(v.message());

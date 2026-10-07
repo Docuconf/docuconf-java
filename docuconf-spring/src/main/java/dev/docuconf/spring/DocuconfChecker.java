@@ -12,6 +12,7 @@ import dev.docuconf.contract.ContractJson;
 import dev.docuconf.contract.FileSpec;
 import dev.docuconf.contract.FileType;
 import dev.docuconf.contract.Json;
+import dev.docuconf.contract.Names;
 import dev.docuconf.contract.VarSpec;
 import dev.docuconf.contract.VarType;
 import jakarta.validation.ConstraintViolation;
@@ -69,6 +70,9 @@ import org.springframework.util.ClassUtils;
  * constraints on the classes. Every problem is reported with its stable code; secret values never appear.
  */
 public final class DocuconfChecker {
+
+    private static final Set<VarType> TRIM_SENSITIVE = Set.of(VarType.INT, VarType.FLOAT, VarType.BOOL,
+            VarType.DURATION);
 
     /** The property source holding file input markers. */
     public static final String PROPERTY_SOURCE = "docuconfFiles";
@@ -169,6 +173,7 @@ public final class DocuconfChecker {
      * @return every violation, empty when the configuration is valid
      */
     public List<Violation> check() {
+        typoHints();
         hideEmptyValues();
         List<Violation> out = new ArrayList<>(overlayProblems());
         Set<String> failed = new HashSet<>();
@@ -180,7 +185,7 @@ public final class DocuconfChecker {
                 List<Violation> found = new ArrayList<>();
                 Path path = FileChecker.resolve(f, this::lookup);
                 Object value = loadFile(f, b, path, found);
-                files.put(f.name, path, value);
+                files.put(f.name, path, value, f.reload);
                 if (!found.isEmpty()) {
                     failed.add(f.name);
                     out.addAll(found);
@@ -207,11 +212,90 @@ public final class DocuconfChecker {
                 List<Violation> found = checkVar(v, b, binder);
                 if (!found.isEmpty()) {
                     failed.add(v.name);
-                    out.addAll(found);
+                    String setAs = setAs(v, b);
+                    for (Violation f : found) {
+                        out.add(setAs == null ? f : new Violation(f.code(), f.input(), f.message()
+                                + " (set as " + setAs + ")"));
+                    }
                 }
             }
         }
         return out;
+    }
+
+    /**
+     * The variable that actually supplied a contract variable's value, when it is another name Spring binds to the
+     * same property ({@code ORDERS_WORKER_COUNT} for {@code ORDERS_WORKERCOUNT}); otherwise {@code null}.
+     */
+    private String setAs(VarSpec v, Bindings.PropertyBinding b) {
+        Map<String, Object> env = systemEnvironment();
+        String key = b != null ? b.configKey() : v.configKey;
+        if (env.containsKey(v.name) || key == null) {
+            return null;
+        }
+        for (String alternative : List.of(Names.envName(key), Names.underscoredEnvName(key))) {
+            if (!alternative.equals(v.name) && env.containsKey(alternative)) {
+                return alternative;
+            }
+        }
+        return null;
+    }
+
+    private Map<String, Object> systemEnvironment() {
+        PropertySource<?> env = environment.getPropertySources()
+                .get(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+        return env instanceof SystemEnvironmentPropertySource system ? system.getSource() : Map.of();
+    }
+
+    /**
+     * Rule: a variable that is set, starts like the service's variables and is within two edits of a declared one
+     * is most likely a typo. It is a warning, never a violation, and the value is never printed.
+     */
+    private void typoHints() {
+        Map<String, Object> env = systemEnvironment();
+        Set<String> accepted = new HashSet<>();
+        Set<String> prefixes = new HashSet<>();
+        Map<String, String> declared = new LinkedHashMap<>();
+        for (ContractBundle bundle : bundles) {
+            for (Bindings.ClassBinding cb : bundle.bindings().classes) {
+                prefixes.add(Names.envName(cb.prefix()) + "_");
+                prefixes.add(Names.underscoredEnvName(cb.prefix()) + "_");
+            }
+            for (VarSpec v : bundle.contract().vars.values()) {
+                declared.put(v.name, v.name);
+                accepted.add(v.name);
+                if (v.configKey != null) {
+                    accepted.add(Names.envName(v.configKey));
+                    accepted.add(Names.underscoredEnvName(v.configKey));
+                    declared.putIfAbsent(Names.envName(v.configKey), v.name);
+                    declared.putIfAbsent(Names.underscoredEnvName(v.configKey), v.name);
+                }
+            }
+            for (FileSpec f : bundle.contract().files.values()) {
+                if (f.pathEnv != null) {
+                    accepted.add(f.pathEnv);
+                    declared.putIfAbsent(f.pathEnv, f.pathEnv);
+                }
+            }
+        }
+        for (String name : new java.util.TreeSet<>(env.keySet())) {
+            if (accepted.contains(name) || prefixes.stream().noneMatch(name::startsWith)
+                    || accepted.stream().anyMatch(a -> name.startsWith(a + "_"))) {
+                continue;
+            }
+            String best = null;
+            int bestDistance = 3;
+            for (Map.Entry<String, String> d : declared.entrySet()) {
+                int distance = Names.editDistance(name, d.getKey(), bestDistance);
+                if (distance < bestDistance) {
+                    best = d.getValue();
+                    bestDistance = distance;
+                }
+            }
+            if (best != null) {
+                warnings.add(name + " is set but not declared; did you mean " + best + "?");
+            }
+        }
     }
 
     /**
@@ -356,12 +440,13 @@ public final class DocuconfChecker {
         if (empty && v.type != VarType.STRING) {
             raw = null; // SPEC §5: empty means unset for every type but string.
         }
-        // Spring binds enum constants in any case, but the contract's values are case-sensitive (SPEC §4.3), so a
-        // value the platform supplies must be one of them exactly, as the platform itself checks.
-        String fromEnv = environmentValue(v.name);
-        if (v.type == VarType.ENUM && fromEnv != null && !fromEnv.isEmpty() && !v.values.contains(fromEnv)) {
-            out.add(new Violation(Code.NOT_IN_ENUM, v.name, "must be one of " + String.join(", ", v.values)
-                    + (v.secret ? "" : " (got " + quote(fromEnv) + ")")));
+        // Enum values bind as Spring binds them, in any case ("warn" for WARN), wherever they come from: the
+        // platform checks the contract's spelling (@Docuconf(enumCase)), the app stays as lenient as Spring.
+        if (raw != null && !raw.isEmpty() && !raw.equals(raw.strip()) && TRIM_SENSITIVE.contains(v.type)) {
+            // SPEC section 5: values are never trimmed. Spring would trim " 8080"; the platform and contract-first
+            // mode reject it, so one contract gives one verdict.
+            out.add(new Violation(Code.INVALID_TYPE, v.name, "is not a valid " + describe(v)
+                    + ": it has leading or trailing whitespace" + (v.secret ? "" : " (got " + quote(raw) + ")")));
             return out;
         }
         Object typed;
@@ -384,6 +469,11 @@ public final class DocuconfChecker {
                 if (capture.error instanceof IllegalStateException internal && internal.getMessage() != null
                         && internal.getMessage().startsWith("docuconf:")) {
                     throw internal;
+                }
+                for (Throwable t = capture.error; t != null; t = t.getCause()) {
+                    if (t instanceof DocuconfSetupException setup) {
+                        throw setup;
+                    }
                 }
                 String got = v.secret || raw == null ? "" : " (got " + quote(raw) + ")";
                 if (outOfRange(v, raw)) {
@@ -434,7 +524,7 @@ public final class DocuconfChecker {
     private Object json(VarSpec v, Bindings.PropertyBinding b, String raw, List<Violation> out) {
         Class<?> type = b == null ? Object.class : load(b.javaType());
         try {
-            Object value = ConfigFileReader.mapper("json").readValue(raw, type);
+            Object value = JsonMapper.forFormat("json").read(raw, type);
             // maxLength bounds the value as received, whitespace included (SPEC §4.3).
             Violation tooLong = VarChecker.jsonMaxLength(v, raw);
             if (tooLong != null) {
@@ -448,7 +538,7 @@ public final class DocuconfChecker {
                 }
             }
             return value;
-        } catch (IOException e) {
+        } catch (JsonMapper.Malformed | JsonMapper.Mismatch e) {
             out.add(new Violation(Code.INVALID_TYPE, v.name, "is not JSON that fits " + type.getSimpleName()));
             return null;
         }
@@ -475,14 +565,8 @@ public final class DocuconfChecker {
         }
         if (value != null && v.maxLength != null) {
             // Nested keys have no wire string: measure the compact JSON of the bound value (SPEC §4.3).
-            Violation tooLong;
-            try {
-                tooLong = VarChecker.jsonMaxLength(v, ConfigFileReader.mapper("json").copy()
-                        .setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-                        .writeValueAsString(value));
-            } catch (IOException e) {
-                tooLong = null;
-            }
+            String compact = JsonMapper.forFormat("json").writeCompact(value);
+            Violation tooLong = compact == null ? null : VarChecker.jsonMaxLength(v, compact);
             if (tooLong != null) {
                 out.add(tooLong);
                 return null;
@@ -543,7 +627,7 @@ public final class DocuconfChecker {
             case DURATION:
                 return (Duration) typed;
             case ENUM:
-                return typed instanceof Enum<?> e ? e.name() : typed.toString();
+                return contractSpelling(v, typed instanceof Enum<?> e ? e.name() : typed.toString());
             case LIST: {
                 List<Object> items = new ArrayList<>();
                 Iterable<?> it = typed instanceof Object[] arr ? List.of(arr) : (Iterable<?>) typed;
@@ -557,6 +641,20 @@ public final class DocuconfChecker {
             default:
                 return typed.toString();
         }
+    }
+
+    /** The contract's spelling of an enum constant ({@code warn} for {@code WARN} under EnumCase.LOWER). */
+    private static String contractSpelling(VarSpec v, String constant) {
+        if (v.values == null || v.values.contains(constant)) {
+            return constant;
+        }
+        String wanted = dev.docuconf.contract.Names.canonical(constant);
+        for (String value : v.values) {
+            if (dev.docuconf.contract.Names.canonical(value).equals(wanted)) {
+                return value;
+            }
+        }
+        return constant;
     }
 
     /**
@@ -632,14 +730,6 @@ public final class DocuconfChecker {
         return t.substring(t.lastIndexOf('.') + 1);
     }
 
-    /** The value the process environment gives a variable, before any other property source. */
-    private String environmentValue(String name) {
-        PropertySource<?> env = environment.getPropertySources()
-                .get(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
-        Object value = env == null ? null : env.getProperty(name);
-        return value == null ? null : value.toString();
-    }
-
     private static Long integer(Object o) {
         if (o instanceof BigInteger b) {
             if (b.bitLength() >= 64) {
@@ -655,7 +745,8 @@ public final class DocuconfChecker {
             case INT -> "integer";
             case FLOAT -> "number";
             case BOOL -> "boolean (true or false)";
-            case DURATION -> "duration (ISO-8601 such as PT1M30S, or 90s)";
+            case DURATION -> "duration; expected an ISO 8601 duration like PT30S (Spring also reads one unit, as in"
+                    + " 30s)";
             case LIST -> "list of " + v.items + "s";
             case ENUM -> "value; use one of " + String.join(", ", v.values);
             default -> v.type.id();
@@ -734,7 +825,7 @@ public final class DocuconfChecker {
             case "Pattern" -> Code.PATTERN_MISMATCH;
             default -> Code.INVALID_TYPE;
         };
-        String message = secret ? "fails @" + annotation : cv.getMessage();
+        String message = secret ? SecretMessages.redacted(cv) : cv.getMessage();
         return new Violation(code, input, message + " (@" + annotation + ")");
     }
 

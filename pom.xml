@@ -37,11 +37,12 @@
   </scm>
 
   <modules>
+    <module>docuconf-bom</module>
     <module>docuconf-core</module>
     <module>docuconf-processor</module>
     <module>docuconf-spring</module>
+    <module>docuconf-maven-plugin</module>
     <module>docuconf-sample</module>
-    <module>examples/orders</module>
   </modules>
 
   <properties>
@@ -52,6 +53,8 @@
     <snakeyaml.version>2.4</snakeyaml.version>
     <junit.version>5.12.2</junit.version>
     <bouncycastle.version>1.81</bouncycastle.version>
+    <!-- Jackson 3, for Spring Boot 4 apps; Spring Boot 4's own version wins when it is the one in use. -->
+    <jackson3.version>3.1.5</jackson3.version>
   </properties>
 
   <dependencyManagement>
@@ -75,6 +78,13 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-dependencies</artifactId>
         <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>tools.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${jackson3.version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -196,7 +206,6 @@
               <waitUntil>validated</waitUntil>
               <excludeArtifacts>
                 <artifact>docuconf-sample</artifact>
-                <artifact>docuconf-example-orders</artifact>
               </excludeArtifacts>
             </configuration>
           </plugin>

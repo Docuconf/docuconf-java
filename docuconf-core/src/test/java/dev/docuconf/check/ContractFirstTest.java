@@ -75,7 +75,7 @@ class ContractFirstTest {
         ContractFirst.InvalidConfigurationException e = assertThrows(
                 ContractFirst.InvalidConfigurationException.class, r::require);
         assertFalse(e.getMessage().contains("short-secret-value"), e.getMessage());
-        assertTrue(e.getMessage().contains("5 problems"), e.getMessage());
+        assertTrue(e.getMessage().startsWith("docuconf: 5 configuration problems:"), e.getMessage());
     }
 
     @Test

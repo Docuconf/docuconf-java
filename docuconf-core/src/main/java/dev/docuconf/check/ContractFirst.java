@@ -21,6 +21,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.TreeSet;
+import java.util.Set;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -110,12 +113,7 @@ public final class ContractFirst {
         }
 
         private static String message(List<Violation> violations) {
-            StringBuilder b = new StringBuilder("docuconf: invalid configuration (" + violations.size()
-                    + (violations.size() == 1 ? " problem)" : " problems)"));
-            for (Violation v : violations) {
-                b.append("\n  ").append(v);
-            }
-            return b.toString();
+            return report(violations).stripTrailing();
         }
     }
 
@@ -135,6 +133,54 @@ public final class ContractFirst {
             TerminationLog.write(r.violations(), env::get);
         }
         return r.require();
+    }
+
+    /**
+     * Loads the process environment against a contract file at startup, or ends the process: on failure it prints
+     * {@code docuconf: N configuration problems:} and one line per problem to standard error, writes the
+     * termination log and exits with status 1, without a stack trace.
+     *
+     * <pre>{@code
+     * Map<String, Object> config = ContractFirst.bootOrExit(Path.of("contract.json"));
+     * }</pre>
+     *
+     * @param contractJson the contract as JSON
+     * @return the typed values
+     */
+    public static Map<String, Object> bootOrExit(Path contractJson) {
+        Map<String, String> env = System.getenv();
+        Result r;
+        try {
+            r = load(Files.readString(contractJson, StandardCharsets.UTF_8), env);
+        } catch (IOException | RuntimeException e) {
+            System.err.println("docuconf: cannot load the contract " + contractJson + ": " + e.getMessage());
+            System.exit(1);
+            return Map.of();
+        }
+        for (String w : r.warnings()) {
+            System.err.println("docuconf: " + w);
+        }
+        if (!r.ok()) {
+            TerminationLog.write(r.violations(), env::get);
+            System.err.print(report(r.violations()));
+            System.exit(1);
+        }
+        return r.values();
+    }
+
+    /**
+     * The report {@link #bootOrExit} prints: {@code docuconf: N configuration problems:} and one line per problem.
+     *
+     * @param violations the problems
+     * @return the text, ending in a newline
+     */
+    public static String report(List<Violation> violations) {
+        StringBuilder b = new StringBuilder("docuconf: ").append(violations.size())
+                .append(violations.size() == 1 ? " configuration problem:\n" : " configuration problems:\n");
+        for (Violation v : violations) {
+            b.append("  ").append(v).append('\n');
+        }
+        return b.toString();
     }
 
     /**
@@ -182,6 +228,7 @@ public final class ContractFirst {
         for (VarSpec v : contract.vars.values()) {
             values.put(v.name, var(v, env, profile, violations, warnings));
         }
+        warnings.addAll(typoHints(contract, env));
         Map<String, Object> files = new LinkedHashMap<>();
         Instant now = Instant.now();
         for (FileSpec f : contract.files.values()) {
@@ -189,6 +236,50 @@ public final class ContractFirst {
         }
         return new Result(Collections.unmodifiableMap(values), Collections.unmodifiableMap(files),
                 List.copyOf(violations), List.copyOf(warnings));
+    }
+
+    /**
+     * Set variables that are not declared but are within two edits of a declared one sharing its first segment
+     * ({@code ORDERS_PROT} for {@code ORDERS_PORT}): most likely typos. The values are never printed.
+     *
+     * @param contract the contract
+     * @param env the environment
+     * @return one warning per likely typo
+     */
+    public static List<String> typoHints(Contract contract, Map<String, String> env) {
+        Set<String> declared = new LinkedHashSet<>(contract.vars.keySet());
+        for (FileSpec f : contract.files.values()) {
+            if (f.pathEnv != null) {
+                declared.add(f.pathEnv);
+            }
+        }
+        List<String> out = new ArrayList<>();
+        for (String name : new TreeSet<>(env.keySet())) {
+            int us = name.indexOf('_');
+            if (declared.contains(name) || us <= 0) {
+                continue;
+            }
+            String prefix = name.substring(0, us + 1);
+            if (declared.stream().anyMatch(d -> name.startsWith(d + "_"))) {
+                continue; // an indexed list item, NAME__0
+            }
+            String best = null;
+            int bestDistance = 3;
+            for (String d : declared) {
+                if (!d.startsWith(prefix)) {
+                    continue;
+                }
+                int distance = dev.docuconf.contract.Names.editDistance(name, d, bestDistance);
+                if (distance < bestDistance) {
+                    best = d;
+                    bestDistance = distance;
+                }
+            }
+            if (best != null) {
+                out.add(name + " is set but not declared; did you mean " + best + "?");
+            }
+        }
+        return out;
     }
 
     /**

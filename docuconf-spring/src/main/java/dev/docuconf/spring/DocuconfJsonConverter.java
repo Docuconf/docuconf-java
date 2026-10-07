@@ -1,8 +1,6 @@
 package dev.docuconf.spring;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.docuconf.Json;
-import java.io.IOException;
 import java.util.Set;
 import org.springframework.core.convert.ConversionFailedException;
 import org.springframework.core.convert.TypeDescriptor;
@@ -14,7 +12,7 @@ import org.springframework.core.convert.converter.ConditionalGenericConverter;
  */
 public final class DocuconfJsonConverter implements ConditionalGenericConverter {
 
-    private final ObjectMapper mapper = ConfigFileReader.mapper("json");
+    private volatile JsonMapper mapper;
 
     /** Creates the converter. */
     public DocuconfJsonConverter() {
@@ -35,9 +33,12 @@ public final class DocuconfJsonConverter implements ConditionalGenericConverter 
         if (source == null || source.toString().isEmpty()) {
             return null;
         }
+        if (mapper == null) {
+            mapper = JsonMapper.forFormat("json");
+        }
         try {
-            return mapper.readValue(source.toString(), mapper.constructType(targetType.getResolvableType().getType()));
-        } catch (IOException e) {
+            return mapper.read(source.toString(), targetType.getResolvableType().getType());
+        } catch (JsonMapper.Malformed | JsonMapper.Mismatch e) {
             // The startup check has already reported this with a redacted message; keep values out of this one.
             throw new ConversionFailedException(sourceType, targetType, null,
                     new IllegalArgumentException("not JSON that fits " + targetType.getType().getSimpleName()));

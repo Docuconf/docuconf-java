@@ -94,7 +94,7 @@ final class Constraints {
             }
             String err = Re2.check(regexp);
             if (err != null) {
-                c.errors.add("@Pattern(\"" + regexp + "\") " + err + " (contract patterns are RE2, SPEC §4.3)");
+                c.errors.add("@Pattern(\"" + regexp + "\") " + err + " (contract patterns are RE2, SPEC section 4.3)");
             } else {
                 // @Pattern matches the whole value; contract patterns match anywhere (SPEC §4.3).
                 c.pattern = Re2.anchor(regexp, flags.toString());

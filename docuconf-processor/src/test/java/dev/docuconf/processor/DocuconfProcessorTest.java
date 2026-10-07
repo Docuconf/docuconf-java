@@ -64,6 +64,11 @@ class DocuconfProcessorTest {
                     @DefaultValue("true") boolean tracing,
                     @NotNull @ConfigFile("/etc/billing/rates/rates.yaml") Rates rates) {
 
+                @Override
+                public String toString() {
+                    return Redacted.toString(this);
+                }
+
                 public enum Level { DEBUG, INFO, WARN }
 
                 /** Pricing tiers. */
@@ -545,7 +550,12 @@ class DocuconfProcessorTest {
                 @Docuconf(service = "svc")
                 @ConfigOverlay(value = "/etc/svc/overlay/svc.yaml", reload = Reload.WATCH)
                 @ConfigurationProperties("svc")
-                public record SvcProperties(@Secret String token, @TextFile("/etc/svc/license/key") String license) {}
+                public record SvcProperties(@Secret String token, @TextFile("/etc/svc/license/key") String license) {
+                    @Override
+                    public String toString() {
+                        return Redacted.toString(this);
+                    }
+                }
                 """;
         Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.SvcProperties", source));
         assertEquals("watch", bundle(c).contract().overlays.get("platform").reload);

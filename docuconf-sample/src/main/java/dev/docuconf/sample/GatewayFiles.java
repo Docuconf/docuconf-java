@@ -9,6 +9,7 @@ import dev.docuconf.KeyAlgorithm;
 import dev.docuconf.Keystore;
 import dev.docuconf.KeystoreFile;
 import dev.docuconf.Reload;
+import dev.docuconf.Redacted;
 import dev.docuconf.Secret;
 import dev.docuconf.TextFile;
 import dev.docuconf.TlsFile;
@@ -64,6 +65,12 @@ public record GatewayFiles(
 
         @BinaryFile(value = "/data/geoip/GeoLite2-City.mmdb", maxSize = 134217728)
         Path geoip) {
+
+    /** Prints the secret as [redacted]; a record's generated toString() would print it. */
+    @Override
+    public String toString() {
+        return Redacted.toString(this);
+    }
 
     /**
      * The routing table.

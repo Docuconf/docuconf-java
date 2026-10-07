@@ -176,8 +176,8 @@ class GatewayBootTest {
                 "out_of_range GATEWAY_UPSTREAMTIMEOUT",
                 "pattern_mismatch GATEWAY_REGION",
                 "pattern_mismatch license"), codes);
-        assertFalse(e.getMessage().contains("session-secret"));
-        assertTrue(e.getMessage().contains("GATEWAY_PORT: is above max 65535 (got 70000)"), e.getMessage());
+        assertFalse(e.getViolations().toString().contains("session-secret"));
+        assertTrue(e.getViolations().toString().contains("GATEWAY_PORT: is above max 65535 (got 70000)"), e.getViolations().toString());
     }
 
     /** An environment whose variables are {@code env}, set before Spring Boot reads profiles and config files. */

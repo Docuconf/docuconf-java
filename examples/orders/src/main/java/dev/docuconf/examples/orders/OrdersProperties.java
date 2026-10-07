@@ -1,6 +1,8 @@
 package dev.docuconf.examples.orders;
 
 import dev.docuconf.Docuconf;
+import dev.docuconf.EnumCase;
+import dev.docuconf.Redacted;
 import dev.docuconf.Secret;
 import dev.docuconf.UrlSchemes;
 import jakarta.validation.constraints.Max;
@@ -28,18 +30,24 @@ import org.springframework.validation.annotation.Validated;
  * @param requestTimeout Time allowed to answer one request
  * @param workerCount Background workers that process new orders
  */
-@Docuconf(service = "orders")
+@Docuconf(service = "orders", enumCase = EnumCase.LOWER)
 @Validated
 @ConfigurationProperties("orders")
 public record OrdersProperties(
         @Min(1) @Max(65535) @DefaultValue("8080") int port,
-        @DefaultValue("info") LogLevel logLevel,
+        @DefaultValue("INFO") LogLevel logLevel,
         // @Secret: the platform must supply it from a Secret, and docuconf never prints it.
         @NotNull @Secret @UrlSchemes("postgres") URI databaseUrl,
         @NotEmpty @DefaultValue("http://localhost:3000") List<String> allowedOrigins,
         @DurationMin(seconds = 1) @DurationMax(minutes = 5) @DefaultValue("30s") Duration requestTimeout,
         @Min(1) @Max(64) @DefaultValue("4") int workerCount) {
 
-    /** The contract's enum values are the constant names, so they are spelled as the variable takes them. */
-    public enum LogLevel { debug, info, warn, error }
+    /** Log levels. The contract spells them in lower case (enumCase); the app accepts any case, as Spring does. */
+    public enum LogLevel { DEBUG, INFO, WARN, ERROR }
+
+    /** Prints the secret as [redacted]; a record's generated toString() would print it. */
+    @Override
+    public String toString() {
+        return Redacted.toString(this);
+    }
 }

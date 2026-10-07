@@ -26,12 +26,16 @@ final class Compilation {
     final List<String> errors;
     final List<String> warnings;
     final Path out;
+    /** Every error and warning, with its source position. */
+    final List<Diagnostic<? extends JavaFileObject>> diagnostics;
 
-    private Compilation(boolean success, List<String> errors, List<String> warnings, Path out) {
+    private Compilation(boolean success, List<String> errors, List<String> warnings, Path out,
+            List<Diagnostic<? extends JavaFileObject>> diagnostics) {
         this.success = success;
         this.errors = errors;
         this.warnings = warnings;
         this.out = out;
+        this.diagnostics = diagnostics;
     }
 
     String contractCue() throws IOException {
@@ -86,6 +90,6 @@ final class Compilation {
         List<String> warnings = diagnostics.getDiagnostics().stream()
                 .filter(d -> d.getKind() == Diagnostic.Kind.WARNING || d.getKind() == Diagnostic.Kind.MANDATORY_WARNING)
                 .map(d -> d.getMessage(Locale.ROOT)).collect(Collectors.toList());
-        return new Compilation(ok, errors, warnings, out);
+        return new Compilation(ok, errors, warnings, out, List.copyOf(diagnostics.getDiagnostics()));
     }
 }

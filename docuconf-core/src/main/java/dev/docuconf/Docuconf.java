@@ -33,4 +33,19 @@ public @interface Docuconf {
      * @return the service name
      */
     String service() default "";
+
+    /**
+     * How the values of this class's enum properties are spelled in the contract. {@link EnumValues} on a
+     * property overrides it.
+     *
+     * @return the case
+     */
+    EnumCase enumCase() default EnumCase.AS_DECLARED;
+
+    /**
+     * How this class's property names become environment variable names in the contract.
+     *
+     * @return the naming
+     */
+    EnvNames envNames() default EnvNames.COMPACT;
 }

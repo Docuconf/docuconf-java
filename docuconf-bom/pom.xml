@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- No parent on purpose: importing a BOM imports its parent's dependency management too, and docuconf-parent
+       pins a Spring Boot version. Keep the version equal to docuconf-parent's (the release sets both). -->
+  <groupId>dev.docuconf</groupId>
+  <artifactId>docuconf-bom</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>docuconf BOM</name>
+  <description>One version for every docuconf artifact: import it in dependencyManagement.</description>
+  <url>https://github.com/docuconf/docuconf-java</url>
+
+  <licenses>
+    <license>
+      <name>MIT</name>
+      <url>https://opensource.org/license/mit</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>docuconf</id>
+      <name>The docuconf authors</name>
+      <url>https://github.com/docuconf</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/docuconf/docuconf-java.git</connection>
+    <developerConnection>scm:git:git@github.com:docuconf/docuconf-java.git</developerConnection>
+    <url>https://github.com/docuconf/docuconf-java</url>
+  </scm>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>dev.docuconf</groupId>
+        <artifactId>docuconf-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.docuconf</groupId>
+        <artifactId>docuconf-processor</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.docuconf</groupId>
+        <artifactId>docuconf-spring</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+</project>
