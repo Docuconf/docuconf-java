@@ -470,6 +470,11 @@ public final class DocuconfChecker {
                         && internal.getMessage().startsWith("docuconf:")) {
                     throw internal;
                 }
+                for (Throwable t = capture.error; t != null; t = t.getCause()) {
+                    if (t instanceof DocuconfSetupException setup) {
+                        throw setup;
+                    }
+                }
                 String got = v.secret || raw == null ? "" : " (got " + quote(raw) + ")";
                 if (outOfRange(v, raw)) {
                     // SPEC §5: an integer the type cannot hold is out_of_range, not invalid_type.
@@ -519,7 +524,7 @@ public final class DocuconfChecker {
     private Object json(VarSpec v, Bindings.PropertyBinding b, String raw, List<Violation> out) {
         Class<?> type = b == null ? Object.class : load(b.javaType());
         try {
-            Object value = ConfigFileReader.mapper("json").readValue(raw, type);
+            Object value = JsonMapper.forFormat("json").read(raw, type);
             if (validator != null) {
                 for (GraphValidator.Problem p : GraphValidator.validate(validator, value)) {
                     out.add(new Violation(Code.SCHEMA_MISMATCH, v.name, p.path() + ": "
@@ -527,7 +532,7 @@ public final class DocuconfChecker {
                 }
             }
             return value;
-        } catch (IOException e) {
+        } catch (JsonMapper.Malformed | JsonMapper.Mismatch e) {
             out.add(new Violation(Code.INVALID_TYPE, v.name, "is not JSON that fits " + type.getSimpleName()));
             return null;
         }
