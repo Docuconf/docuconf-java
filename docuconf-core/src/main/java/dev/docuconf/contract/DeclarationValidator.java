@@ -76,7 +76,7 @@ public final class DeclarationValidator {
         }
         if (Names.FEATURE_FLAG.matcher(n).find()) {
             warnings.add(n + ": looks like a feature flag; flags that change without a rollout belong in a flag"
-                    + " service (SPEC §10)");
+                    + " service (SPEC section 10)");
         }
         description(n, v.description);
         if (v.required && v.defaultValue != null) {

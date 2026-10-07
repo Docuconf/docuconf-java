@@ -1,5 +1,6 @@
 package dev.docuconf.processor;
 
+import dev.docuconf.EnumCase;
 import dev.docuconf.contract.Bindings;
 import dev.docuconf.contract.Contract;
 import dev.docuconf.contract.ContractBundle;
@@ -98,7 +99,13 @@ public final class DocuconfProcessor extends AbstractProcessor {
     /** Root classes bound through a constructor (records, @ConstructorBinding), which cannot be rebound in place. */
     private final Map<String, TypeElement> constructorBound = new LinkedHashMap<>();
     private final Map<String, Element> overlayElements = new LinkedHashMap<>();
+    /** {@code @Docuconf(enumCase, envNames)} of each root class, by binary name. */
+    private final Map<String, String[]> settings = new LinkedHashMap<>();
     private boolean failed;
+    /** Diagnostics already printed, so that analysing again in a later round does not repeat them. */
+    private final Set<String> reported = new java.util.HashSet<>();
+    /** Whether classes were collected since the contract was last analysed. */
+    private boolean dirty;
 
     @Override
     public synchronized void init(ProcessingEnvironment env) {
@@ -130,12 +137,20 @@ public final class DocuconfProcessor extends AbstractProcessor {
             for (Element e : round.getElementsAnnotatedWith(marker)) {
                 if (e instanceof TypeElement te) {
                     collect(te);
+                    dirty = true;
                 }
             }
         }
-        if (round.processingOver() && !classNames.isEmpty()) {
+        // Analyse in the round the classes were found in: javac only attaches a source position (file and line)
+        // to a diagnostic while the element's tree is live, which it no longer is in the final round.
+        if (dirty && !classNames.isEmpty()) {
+            dirty = false;
+            analyse();
+        }
+        if (round.processingOver() && !classNames.isEmpty() && !failed) {
             try {
-                finish();
+                write(ContractJson.CUE_LOCATION, CueWriter.write(contract));
+                write(ContractJson.LOCATION, ContractJson.write(new ContractBundle(contract, bindings)));
             } catch (IOException e) {
                 error(null, "docuconf: could not write the contract: " + e.getMessage());
             }
@@ -170,6 +185,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
         }
         String className = elements.getBinaryName(te).toString();
         classNames.add(className);
+        AnnotationMirror docuconf = annotation(te, DOCUCONF);
+        settings.put(className, new String[] {Mirrors.string(elements, docuconf, "enumCase"),
+                Mirrors.string(elements, docuconf, "envNames")});
         bindings.classes.add(new Bindings.ClassBinding(className, prefix));
         if (te.getKind() == ElementKind.RECORD || bindConstructor(te) != null) {
             constructorBound.put(className, te);
@@ -277,6 +295,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 continue;
             }
             Kind kind = classify(p.type(), a);
+            if (!placement(p, kind, envName(root, configKey))) {
+                continue;
+            }
             switch (kind.what()) {
                 case VAR -> var(root, p, kind, configKey, javaPath, propGroup);
                 case NESTED -> {
@@ -556,6 +577,95 @@ public final class DocuconfProcessor extends AbstractProcessor {
         return e.getKind().isPrimitive() ? e.getKind().name().toLowerCase(Locale.ROOT) : e.toString();
     }
 
+    private static final String BV = "jakarta.validation.constraints.";
+    private static final String HV = "org.hibernate.validator.constraints.";
+    private static final List<String> NUMERIC = List.of(BV + "Min", BV + "Max", BV + "DecimalMin", BV + "DecimalMax",
+            BV + "Positive", BV + "PositiveOrZero", BV + "Negative", BV + "NegativeOrZero", BV + "Digits",
+            HV + "Range");
+    private static final List<String> TEXT = List.of(BV + "Pattern", BV + "Email", BV + "NotBlank", HV + "URL",
+            HV + "Length");
+    private static final List<String> SIZED = List.of(BV + "Size", BV + "NotEmpty");
+    private static final List<String> DURATION = List.of(HV + "time.DurationMin", HV + "time.DurationMax",
+            "org.springframework.boot.convert.DurationUnit");
+    private static final List<String> VARS_ONLY = List.of(D + "Secret", D + "UrlSchemes", D + "Json", D + "Examples",
+            "org.springframework.boot.convert.Delimiter");
+
+    /**
+     * SPEC section 11.2 item 2: an annotation that does not apply to the property's type would be dropped from the
+     * contract (or fail only at startup), so it is a build error that names the property and the types it fits.
+     *
+     * @return whether the property can be exported
+     */
+    private boolean placement(Prop p, Kind kind, String envName) {
+        Map<String, AnnotationMirror> a = p.annotations();
+        TypeMirror t = p.type();
+        String type = simpleType(t);
+        List<String> problems = new ArrayList<>();
+        if (kind.what() == What.NESTED) {
+            for (String name : VARS_ONLY) {
+                if (a.containsKey(name)) {
+                    problems.add("@" + simple(name) + " applies to a single value, not to the nested class " + type
+                            + "; put it on the properties inside " + type);
+                }
+            }
+        } else if (kind.what() == What.VAR) {
+            boolean json = kind.type() == VarType.JSON;
+            boolean text = isA(t, "java.lang.CharSequence");
+            boolean numeric = t.getKind().isPrimitive() ? t.getKind() != TypeKind.BOOLEAN && t.getKind() != TypeKind.CHAR
+                    : isA(t, "java.lang.Number");
+            boolean sized = text || t.getKind() == TypeKind.ARRAY || isA(t, "java.util.Collection")
+                    || isA(t, "java.util.Map");
+            boolean duration = isA(t, "java.time.Duration");
+            if (a.containsKey(D + "UrlSchemes") && !json && !text && !isA(t, "java.net.URI") && !isA(t, "java.net.URL")) {
+                problems.add("@UrlSchemes applies to String, URI or URL, not " + type);
+            }
+            for (String name : NUMERIC) {
+                if (a.containsKey(name) && !numeric && !json) {
+                    problems.add("@" + simple(name) + " applies to numbers, not " + type);
+                }
+            }
+            for (String name : TEXT) {
+                if (a.containsKey(name) && !text && !json) {
+                    problems.add("@" + simple(name) + " applies to String, not " + type);
+                }
+            }
+            for (String name : SIZED) {
+                if (a.containsKey(name) && !sized) {
+                    problems.add("@" + simple(name) + " applies to String, a collection, a map or an array, not "
+                            + type);
+                }
+            }
+            for (String name : DURATION) {
+                if (a.containsKey(name) && !duration && !json) {
+                    problems.add("@" + simple(name) + " applies to Duration, not " + type);
+                }
+            }
+            if (a.containsKey("org.springframework.boot.convert.Delimiter") && kind.type() != VarType.LIST) {
+                problems.add("@Delimiter applies to a list, set or array, not " + type);
+            }
+        }
+        for (String problem : problems) {
+            error(p.element(), envName + ": " + problem);
+        }
+        return problems.isEmpty();
+    }
+
+    private static String simple(String qualified) {
+        return qualified.substring(qualified.lastIndexOf('.') + 1);
+    }
+
+    private String simpleType(TypeMirror t) {
+        TypeMirror e = types.erasure(t);
+        if (e.getKind().isPrimitive()) {
+            return e.getKind().name().toLowerCase(Locale.ROOT);
+        }
+        if (e.getKind() == TypeKind.ARRAY) {
+            return simpleType(((ArrayType) e).getComponentType()) + "[]";
+        }
+        Element el = types.asElement(e);
+        return el == null ? e.toString() : el.getSimpleName().toString();
+    }
+
     private boolean isScalar(TypeMirror t) {
         Kind k = classify(t, Map.of());
         return k.what() == What.VAR;
@@ -584,9 +694,12 @@ public final class DocuconfProcessor extends AbstractProcessor {
 
     private void var(String root, Prop p, Kind kind, String configKey, String javaPath, String group) {
         Map<String, AnnotationMirror> a = p.annotations();
-        String envName = Names.envName(configKey);
+        String envName = envName(root, configKey);
         if (contract.vars.containsKey(envName)) {
-            error(p.element(), envName + " is declared twice");
+            String other = contract.vars.get(envName).configKey;
+            error(p.element(), envName + " is declared twice" + (other == null || other.equals(configKey) ? ""
+                    : ": " + other + " and " + configKey + " both map to it; rename one, or use"
+                    + " @Docuconf(envNames = EnvNames.COMPACT)"));
             return;
         }
         VarSpec v = new VarSpec(envName, kind.type(), description(a, p.doc()));
@@ -597,7 +710,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
         if (ex != null) {
             v.examples = Mirrors.strings(elements, ex, "value");
         }
-        v.deprecated = deprecation(a);
+        v.deprecated = deprecation(root, a);
         Constraints c = Constraints.read(elements, a);
         for (String err : c.errors) {
             error(p.element(), envName + ": " + err);
@@ -648,7 +761,12 @@ public final class DocuconfProcessor extends AbstractProcessor {
                     v.schemes = Mirrors.strings(elements, s, "value");
                 }
             }
-            case ENUM -> v.values = kind.values();
+            case ENUM -> {
+                AnnotationMirror ev = a.get(D + "EnumValues");
+                EnumCase style = EnumCase.valueOf(ev != null ? Mirrors.string(elements, ev, "value")
+                        : settings.get(root)[0]);
+                v.values = kind.values().stream().map(style::apply).toList();
+            }
             case LIST -> {
                 v.items = kind.items();
                 v.encoding = "csv";
@@ -674,7 +792,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
             }
             case JSON -> {
                 SchemaGenerator g = new SchemaGenerator(elements, types);
-                v.schema = g.schema(p.type());
+                v.schema = sized(g.schema(p.type()), c);
                 for (String err : g.errors()) {
                     error(p.element(), envName + ": " + err);
                 }
@@ -688,6 +806,31 @@ public final class DocuconfProcessor extends AbstractProcessor {
         bindings.vars.put(envName, new Bindings.PropertyBinding(root, javaPath, configKey,
                 typeName(p.type()), kind.elementType(), unit));
         pending.add(new PendingVar(v, p, kind, unit));
+    }
+
+    /** Carries a top-level {@code @Size}/{@code @NotEmpty} on a {@code @Json} property into its JSON Schema. */
+    private static Map<String, Object> sized(Map<String, Object> schema, Constraints c) {
+        Integer min = c.sizeMin;
+        if (c.notEmpty && (min == null || min < 1)) {
+            min = 1;
+        }
+        if (schema == null || (min == null && c.sizeMax == null)) {
+            return schema;
+        }
+        Object type = schema.get("type");
+        String lo = "array".equals(type) ? "minItems" : "object".equals(type) ? "minProperties"
+                : "string".equals(type) ? "minLength" : null;
+        if (lo == null) {
+            return schema;
+        }
+        Map<String, Object> out = new LinkedHashMap<>(schema);
+        if (min != null) {
+            out.put(lo, min);
+        }
+        if (c.sizeMax != null) {
+            out.put(lo.replace("min", "max"), c.sizeMax);
+        }
+        return out;
     }
 
     /**
@@ -748,12 +891,19 @@ public final class DocuconfProcessor extends AbstractProcessor {
         return d != null ? Mirrors.string(elements, d, "value") : doc;
     }
 
-    private Deprecation deprecation(Map<String, AnnotationMirror> a) {
+    /** The environment variable for a property, in the naming its root class chose. */
+    private String envName(String root, String configKey) {
+        String[] s = settings.get(root);
+        return s != null && "UNDERSCORED".equals(s[1]) ? Names.underscoredEnvName(configKey)
+                : Names.envName(configKey);
+    }
+
+    private Deprecation deprecation(String root, Map<String, AnnotationMirror> a) {
         AnnotationMirror dcp = a.get("org.springframework.boot.context.properties.DeprecatedConfigurationProperty");
         if (dcp != null) {
             String reason = Mirrors.string(elements, dcp, "reason");
             String replacement = Mirrors.string(elements, dcp, "replacement");
-            String replacedBy = replacement == null || replacement.isEmpty() ? null : Names.envName(replacement);
+            String replacedBy = replacement == null || replacement.isEmpty() ? null : envName(root, replacement);
             return new Deprecation(reason == null || reason.isEmpty() ? "Deprecated" : reason, replacedBy);
         }
         if (a.containsKey("java.lang.Deprecated")) {
@@ -765,7 +915,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
     // ---------------------------------------------------------------------------------------------------------
     // Files
 
-    private record PendingPassword(FileSpec spec, String configKey, Element element) {
+    private record PendingPassword(FileSpec spec, String root, String configKey, Element element) {
     }
 
     private void file(String root, Prop p, String annotationName, String configKey, String javaPath,
@@ -823,7 +973,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
         f.required = c.requiresValue();
         f.secret = f.secret || a.containsKey(D + "Secret");
         f.group = group;
-        f.deprecated = deprecation(a);
+        f.deprecated = deprecation(root, a);
         String pathEnv = Mirrors.string(elements, m, "pathEnv");
         f.pathEnv = pathEnv == null || pathEnv.isEmpty() ? null : pathEnv;
         f.reload = Mirrors.string(elements, m, "reload").toLowerCase(Locale.ROOT);
@@ -869,7 +1019,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 f.format = Mirrors.string(elements, m, "format").toLowerCase(Locale.ROOT);
                 String pw = Mirrors.string(elements, m, "passwordProperty");
                 if (pw != null && !pw.isEmpty()) {
-                    passwords.add(new PendingPassword(f, keyPrefix + "." + Names.dashed(pw), p.element()));
+                    passwords.add(new PendingPassword(f, root, keyPrefix + "." + Names.dashed(pw), p.element()));
                 }
             }
             case TEXT -> {
@@ -891,9 +1041,15 @@ public final class DocuconfProcessor extends AbstractProcessor {
     // ---------------------------------------------------------------------------------------------------------
     // Finishing: defaults, profiles, validation, output
 
-    private void finish() throws IOException {
+    private void analyse() {
         Path resources = resourcesDir();
-        SpringFiles files = SpringFiles.read(resources, w -> warn(null, "docuconf: " + w));
+        SpringFiles files;
+        try {
+            files = SpringFiles.read(resources, w -> warn(null, "docuconf: " + w));
+        } catch (IOException e) {
+            error(null, "docuconf: could not read application*.yml from " + resources + ": " + e.getMessage());
+            return;
+        }
         contract.name = serviceName(files);
         contract.appVersion = processingEnv.getOptions().get("docuconf.appVersion");
         contract.sdkVersion = sdkVersion();
@@ -902,7 +1058,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
             defaults(pv, files);
         }
         for (PendingPassword pp : passwords) {
-            pp.spec().passwordVar = Names.envName(pp.configKey());
+            pp.spec().passwordVar = envName(pp.root(), pp.configKey());
         }
         profiles(files);
         watchableOverlays();
@@ -914,11 +1070,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
         for (String e : result.errors()) {
             error(elementFor(e), e);
         }
-        if (failed) {
-            return;
-        }
-        write(ContractJson.CUE_LOCATION, CueWriter.write(contract));
-        write(ContractJson.LOCATION, ContractJson.write(new ContractBundle(contract, bindings)));
+        featureFlags(result.warnings());
     }
 
     private void defaults(PendingVar pv, SpringFiles files) {
@@ -928,6 +1080,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
         Constraints c = Constraints.read(elements, p.annotations());
         Object fromCode = null;
         boolean unknown = false;
+        boolean implicitZero = false;
         if (p.defaultValue() != null) {
             List<String> dv = p.defaultValue();
             fromCode = v.type == VarType.LIST ? dv : dv.isEmpty() ? null : dv.get(0);
@@ -939,6 +1092,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
             // Spring leaves an unset primitive at its zero value.
             fromCode = p.type().getKind() == TypeKind.BOOLEAN ? Boolean.FALSE
                     : p.type().getKind() == TypeKind.CHAR ? null : 0;
+            implicitZero = fromCode != null && !Boolean.FALSE.equals(fromCode);
         }
         // An empty initializer on a property that must not be empty only avoids null: it is not a default.
         if (c.requiresValue() && (("".equals(fromCode)) || (fromCode instanceof List<?> l && l.isEmpty()))) {
@@ -965,11 +1119,60 @@ public final class DocuconfProcessor extends AbstractProcessor {
             error(el, v.name + ": a secret cannot have a default (found one in " + where + ")");
             return;
         }
+        if (fromFile == null && implicitZero && breaksBounds(v)) {
+            // The user wrote no default: Spring's zero for an unset primitive is what breaks the constraint.
+            String java = p.type().getKind().name().toLowerCase(Locale.ROOT) + " " + p.javaName();
+            boolean record = el.getKind() == ElementKind.RECORD_COMPONENT || el.getKind() == ElementKind.PARAMETER;
+            error(el, v.name + ": `" + java + "` has no " + (record ? "@DefaultValue" : "initializer or default")
+                    + ", so Spring binds 0 when " + v.name + " is unset, which breaks " + bounds(v) + ". Add "
+                    + (record ? "@DefaultValue(\"" + suggestion(v) + "\")" : "an initializer such as `= "
+                    + suggestion(v) + "`") + ", or make it `@NotNull " + boxed(p.type()) + "` to require it.");
+            return;
+        }
         try {
             v.defaultValue = Values.toContract(v, raw, pv.durationUnit());
             v.required = false;
         } catch (IllegalArgumentException e) {
             error(el, v.name + ": the default in " + where + " is not a valid " + v.type.id() + ": " + e.getMessage());
+        }
+    }
+
+    /** Whether zero falls outside the variable's min and max. */
+    private static boolean breaksBounds(VarSpec v) {
+        BigDecimal min = v.min == null ? null : new BigDecimal(v.min.toString());
+        BigDecimal max = v.max == null ? null : new BigDecimal(v.max.toString());
+        return (min != null && min.signum() > 0) || (max != null && max.signum() < 0);
+    }
+
+    private static String bounds(VarSpec v) {
+        BigDecimal min = v.min == null ? null : new BigDecimal(v.min.toString());
+        return min != null && min.signum() > 0 ? "its minimum " + v.min : "its maximum " + v.max;
+    }
+
+    private static String suggestion(VarSpec v) {
+        BigDecimal min = v.min == null ? null : new BigDecimal(v.min.toString());
+        return min != null && min.signum() > 0 ? v.min.toString() : v.max.toString();
+    }
+
+    private String boxed(TypeMirror t) {
+        return t.getKind().isPrimitive() ? types.boxedClass((javax.lang.model.type.PrimitiveType) t).getSimpleName()
+                .toString() : t.toString();
+    }
+
+    /**
+     * SPEC section 10: names that look like feature flags warn. Spring names carry the properties prefix
+     * ({@code ORDERS_ENABLEBETA}), so the property's own name ({@code enable-beta}) is what is checked.
+     */
+    private void featureFlags(List<String> alreadyWarned) {
+        for (VarSpec v : contract.vars.values()) {
+            if (v.configKey == null || alreadyWarned.stream().anyMatch(w -> w.startsWith(v.name + ":"))) {
+                continue;
+            }
+            String leaf = v.configKey.substring(v.configKey.lastIndexOf('.') + 1);
+            if (leaf.matches("(ff|feature|feature-flag|enable|enabled)-.+")) {
+                warn(elementsByInput.get(v.name), v.name + ": " + leaf + " looks like a feature flag; flags that"
+                        + " change without a rollout belong in a flag service (SPEC section 10)");
+            }
         }
     }
 
@@ -1176,10 +1379,25 @@ public final class DocuconfProcessor extends AbstractProcessor {
 
     private void error(Element e, String message) {
         failed = true;
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, message, e);
+        print(Diagnostic.Kind.ERROR, e, message);
     }
 
     private void warn(Element e, String message) {
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, message, e);
+        print(Diagnostic.Kind.WARNING, e, message);
+    }
+
+    /**
+     * Prints a diagnostic once. Without an element of its own it is attached to the first {@code @Docuconf} class,
+     * so every docuconf diagnostic has a file and line an IDE can jump to.
+     */
+    private void print(Diagnostic.Kind kind, Element e, String message) {
+        Element at = e != null ? e : firstClass();
+        if (reported.add(kind + "|" + message)) {
+            processingEnv.getMessager().printMessage(kind, message, at);
+        }
+    }
+
+    private Element firstClass() {
+        return classNames.isEmpty() ? null : elements.getTypeElement(classNames.get(0).replace('$', '.'));
     }
 }
