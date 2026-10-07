@@ -43,7 +43,6 @@
     <module>docuconf-spring</module>
     <module>docuconf-maven-plugin</module>
     <module>docuconf-sample</module>
-    <module>examples/orders</module>
   </modules>
 
   <properties>
@@ -207,7 +206,6 @@
               <waitUntil>validated</waitUntil>
               <excludeArtifacts>
                 <artifact>docuconf-sample</artifact>
-                <artifact>docuconf-example-orders</artifact>
               </excludeArtifacts>
             </configuration>
           </plugin>

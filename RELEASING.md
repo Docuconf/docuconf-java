@@ -1,7 +1,8 @@
 # Releasing
 
-docuconf-java publishes three artifacts to Maven Central: `dev.docuconf:docuconf-core`, `docuconf-processor`
-and `docuconf-spring` (with `docuconf-parent`, their parent POM). `docuconf-sample` is never published.
+docuconf-java publishes these artifacts to Maven Central: `dev.docuconf:docuconf-bom`, `docuconf-core`,
+`docuconf-processor`, `docuconf-spring` and `docuconf-maven-plugin` (with `docuconf-parent`, their parent POM).
+`docuconf-sample` and the examples are never published.
 
 Releases run from `.github/workflows/release.yml` when a `v*` tag is pushed. Nothing has been published yet.
 
@@ -40,7 +41,10 @@ requires).
    Central Portal.
 3. The deployment is uploaded with `autoPublish=false`: open the Central Portal, check the deployment's files, and
    press **Publish**. Switch `autoPublish` to `true` in `pom.xml` once the process is trusted.
-4. Bump the development version on `main` (`mvn versions:set -DnewVersion=0.2.0-SNAPSHOT`).
+4. Bump the development version on `main` (`mvn versions:set -DnewVersion=0.2.0-SNAPSHOT -DprocessAllModules=true`).
+5. The README and the examples (`examples/orders/pom.xml`, `examples/orders-gradle/build.gradle.kts`) name the
+   version as users write it: replace `0.1.0-SNAPSHOT` with the released version there, and drop the README's
+   "build from source" step once the artifacts are on Maven Central.
 
 ## Dry run locally
 

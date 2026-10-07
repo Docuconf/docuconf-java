@@ -1,7 +1,7 @@
 name: Release
 
-# Push a tag such as v0.1.0 to publish dev.docuconf:docuconf-core, docuconf-processor and docuconf-spring to
-# Maven Central through the Central Portal. The Central Portal has no OIDC trusted publishing, so this uses a
+# Push a tag such as v0.1.0 to publish dev.docuconf:docuconf-bom, docuconf-core, docuconf-processor, docuconf-spring
+# and docuconf-maven-plugin to Maven Central through the Central Portal. The Central Portal has no OIDC trusted publishing, so this uses a
 # Portal user token and a GPG key stored as secrets in the "maven-central" environment. See RELEASING.md.
 on:
   push:
@@ -43,7 +43,8 @@ jobs:
         run: go install cuelang.org/go/cmd/cue@v0.17.1
 
       - name: Set the version from the tag
-        run: mvn -B -ntp versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DgenerateBackupPoms=false
+        # processAllModules: docuconf-bom has no parent, so it is not updated as a child.
+        run: mvn -B -ntp versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DprocessAllModules=true -DgenerateBackupPoms=false
 
       - name: Test, sign and upload
         run: mvn -B -ntp -Prelease deploy

@@ -22,6 +22,8 @@ jobs:
           - java: "21"
             spring-boot: "4.1.1"
     name: Java ${{ matrix.java }}, Spring Boot ${{ matrix.spring-boot }}
+    env:
+      MAVEN_ARGS: -B -ntp
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +48,7 @@ jobs:
         run: go install cuelang.org/go/cmd/cue@v0.17.1
 
       - name: Build and test
-        run: mvn -B -ntp verify -Dspring-boot.version=${{ matrix.spring-boot }}
+        run: mvn verify -Dspring-boot.version=${{ matrix.spring-boot }}
         env:
           DOCUCONF_SPEC_CUE: ${{ github.workspace }}/docuconf-go/spec/cue
           DOCUCONF_REQUIRE_VET: "1"
@@ -54,11 +56,17 @@ jobs:
           DOCUCONF_CONFORMANCE: ${{ github.workspace }}/docuconf-go/conformance/cases.json
           DOCUCONF_REQUIRE_CONFORMANCE: "1"
 
-      # The orders example (examples/orders), built by the step above as a module of the reactor.
-      - name: "Example: the committed contract is the exported one"
-        run: |
-          cp examples/orders/target/classes/META-INF/docuconf/contract.cue examples/orders/contract.cue
-          git diff --exit-code -- examples/orders/contract.cue
+      # README step 1: install the SDK from source, for the examples, which are ordinary user projects.
+      - name: Install the SDK as the README says
+        run: mvn install -DskipTests -Dspring-boot.version=${{ matrix.spring-boot }}
+
+      # README steps 3 to 6, as written (mvn package, run, see an error, docuconf:export, mvn verify with the
+      # contract check and the example's tests).
+      - name: "Example: the README quickstart"
+        run: examples/orders/quickstart.sh
+
+      - name: "Example: Spring's configuration processor still runs next to docuconf's"
+        run: test -f examples/orders/target/classes/META-INF/spring-configuration-metadata.json
 
       - name: "Example: cue vet the contract"
         run: |
@@ -71,6 +79,16 @@ jobs:
       - name: "Example: smoke test"
         run: examples/orders/smoke.sh
 
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      # The README's Gradle setup: the same sources, the compileJava input and the contract tasks.
+      - name: "Example: Gradle build and contract check"
+        run: |
+          gradle -p examples/orders-gradle check
+          diff examples/orders/contract.cue examples/orders-gradle/contract.cue
+
       - name: Check the release build (sources, javadoc) without signing
         if: matrix.java == '21' && matrix.spring-boot == '3.5.16'
-        run: mvn -B -ntp -Prelease -DskipTests -Dgpg.skip package
+        run: mvn -Prelease -DskipTests -Dgpg.skip package
