@@ -68,4 +68,54 @@ class ContractFilesTest {
         assertNull(ContractFiles.difference(exported, committed));
         assertTrue(ContractFiles.difference(exported, classes.resolve("missing.cue")).endsWith("does not exist"));
     }
+
+    // Every release bumps the SDK version, which contracts record in metadata.generator.version. The check ignores
+    // that value, and only that value, so a release does not make every committed contract stale.
+    @Test
+    void onlyTheGeneratorVersionIsIgnored() throws Exception {
+        Path exported = classes.resolve("exported.cue");
+        Path committed = classes.resolve("contract.cue");
+        String cue = """
+                metadata: {
+                \tname: "orders"
+                \tappVersion: "1.0.0"
+                \tgenerator: {language: "java", sdk: "docuconf-spring", version: "0.2.0"}
+                }
+                vars: {
+                \tORDERS_PORT: {type: "int", default: 8080}
+                }
+                """;
+        Files.writeString(exported, cue);
+
+        Files.writeString(committed, cue.replace("version: \"0.2.0\"", "version: \"0.1.0-SNAPSHOT\""));
+        assertNull(ContractFiles.difference(exported, committed));
+
+        for (String[] edit : new String[][] {
+                {"sdk: \"docuconf-spring\"", "sdk: \"docuconf-core\""},
+                {"language: \"java\"", "language: \"kotlin\""},
+                {"appVersion: \"1.0.0\"", "appVersion: \"0.2.0\""},
+                {"default: 8080", "default: 9090"},
+                {"name: \"orders\"", "name: \"payments\""}}) {
+            String other = cue.replace("version: \"0.2.0\"", "version: \"0.1.0-SNAPSHOT\"").replace(edit[0], edit[1]);
+            assertTrue(!other.equals(cue), edit[0]);
+            Files.writeString(committed, other);
+            assertTrue(ContractFiles.difference(exported, committed) != null, "not detected: " + edit[1]);
+        }
+        Files.writeString(committed, cue.replace("default: 8080", "default: 9090"));
+        assertEquals("line 7: committed `ORDERS_PORT: {type: \"int\", default: 9090}`, exported"
+                + " `ORDERS_PORT: {type: \"int\", default: 8080}`", ContractFiles.difference(exported, committed));
+    }
+
+    @Test
+    void theGeneratorVersionIsIgnoredInJsonToo() {
+        String json = "{\n  \"metadata\": {\n    \"generator\": {\n      \"language\": \"java\",\n"
+                + "      \"version\": \"0.2.0\"\n    },\n    \"appVersion\": \"1.0.0\"\n  }\n}\n";
+        String older = json.replace("\"0.2.0\"", "\"0.1.0\"");
+        assertEquals(ContractFiles.withoutGeneratorVersion(json), ContractFiles.withoutGeneratorVersion(older));
+        String otherApp = older.replace("\"1.0.0\"", "\"2.0.0\"");
+        assertTrue(!ContractFiles.withoutGeneratorVersion(json).equals(ContractFiles.withoutGeneratorVersion(otherApp)));
+        String otherLanguage = older.replace("\"java\"", "\"kotlin\"");
+        assertTrue(!ContractFiles.withoutGeneratorVersion(json).equals(
+                ContractFiles.withoutGeneratorVersion(otherLanguage)));
+    }
 }

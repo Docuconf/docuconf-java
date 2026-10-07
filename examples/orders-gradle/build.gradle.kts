@@ -60,14 +60,17 @@ val docuconfExport by tasks.registering {
     doLast { exported.get().asFile.copyTo(committed.asFile, overwrite = true) }
 }
 
-// ./gradlew check fails when the committed contract.cue is not the exported one.
+// ./gradlew check fails when the committed contract.cue is not the exported one. It ignores only the value of
+// metadata.generator.version, the SDK version, so upgrading the SDK does not by itself make the contract stale.
 val docuconfCheck by tasks.registering {
     val exported = exportedContract
     val committed = layout.projectDirectory.file("contract.cue")
     inputs.file(exported)
     doLast {
-        val now = exported.get().asFile.readText()
-        if (!committed.asFile.exists() || committed.asFile.readText() != now) {
+        val sdkVersion = Regex("""(generator: \{[^{}]*?\bversion: )"[^"]*"""")
+        fun normalized(cue: String) = sdkVersion.replace(cue, "\$1\"\"")
+        val now = normalized(exported.get().asFile.readText())
+        if (!committed.asFile.exists() || normalized(committed.asFile.readText()) != now) {
             throw GradleException("docuconf: contract.cue is out of date; run ./gradlew docuconfExport and commit it")
         }
     }

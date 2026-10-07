@@ -10,10 +10,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /** What the goals do, apart from Maven, so it can be tested without a Maven build. */
 final class ContractFiles {
+
+    /**
+     * The value of {@code metadata.generator.version}: {@code generator: {... version: "x"}} in CUE,
+     * {@code "generator": {... "version": "x"}} in JSON.
+     */
+    private static final Pattern GENERATOR_VERSION =
+            Pattern.compile("(\"?generator\"?\\s*:\\s*\\{[^{}]*?\\bversion\"?\\s*:\\s*)\"[^\"]*\"");
 
     private ContractFiles() {
     }
@@ -66,7 +74,9 @@ final class ContractFiles {
     }
 
     /**
-     * Compares the committed contract with the exported one.
+     * Compares the committed contract with the exported one. Only the value of {@code metadata.generator.version}
+     * is ignored: it is the SDK version, which changes with every SDK release (and every release of this
+     * repository), so a contract exported by another SDK version is still up to date.
      *
      * @param exported the contract the processor wrote
      * @param committed the copy next to the pom
@@ -77,8 +87,8 @@ final class ContractFiles {
         if (!Files.isRegularFile(committed)) {
             return committed + " does not exist";
         }
-        List<String> a = Files.readAllLines(committed, StandardCharsets.UTF_8);
-        List<String> b = Files.readAllLines(exported, StandardCharsets.UTF_8);
+        List<String> a = withoutGeneratorVersion(Files.readString(committed, StandardCharsets.UTF_8)).lines().toList();
+        List<String> b = withoutGeneratorVersion(Files.readString(exported, StandardCharsets.UTF_8)).lines().toList();
         for (int i = 0; i < Math.max(a.size(), b.size()); i++) {
             String was = i < a.size() ? a.get(i).strip() : "(end of file)";
             String now = i < b.size() ? b.get(i).strip() : "(end of file)";
@@ -87,6 +97,16 @@ final class ContractFiles {
             }
         }
         return null;
+    }
+
+    /**
+     * Replaces the value of {@code metadata.generator.version} with a placeholder and leaves everything else as it is.
+     *
+     * @param contract a contract, CUE or JSON
+     * @return the contract with {@code "<generator-version>"} as the generator's version
+     */
+    static String withoutGeneratorVersion(String contract) {
+        return GENERATOR_VERSION.matcher(contract).replaceAll("$1\"<generator-version>\"");
     }
 
     private static ContractBundle read(Path classes) throws IOException {
