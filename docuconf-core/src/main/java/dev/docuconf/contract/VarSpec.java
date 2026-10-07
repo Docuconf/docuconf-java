@@ -54,6 +54,10 @@ public final class VarSpec {
     public Integer minItems;
     /** List: greatest number of items. */
     public Integer maxItems;
+    /** Int list: least value of each item. */
+    public Long itemMin;
+    /** Int list: greatest value of each item. */
+    public Long itemMax;
     /** JSON: the JSON Schema of the value. */
     public Map<String, Object> schema;
 

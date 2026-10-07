@@ -5,6 +5,7 @@ import dev.docuconf.check.FileChecker;
 import dev.docuconf.check.InjectorReference;
 import dev.docuconf.check.VarChecker;
 import dev.docuconf.check.Violation;
+import dev.docuconf.check.WireFormat;
 import dev.docuconf.contract.Bindings;
 import dev.docuconf.contract.ContractBundle;
 import dev.docuconf.contract.ContractJson;
@@ -347,6 +348,14 @@ public final class DocuconfChecker {
         if (empty && v.type != VarType.STRING) {
             raw = null; // SPEC §5: empty means unset for every type but string.
         }
+        // Spring binds enum constants in any case, but the contract's values are case-sensitive (SPEC §4.3), so a
+        // value the platform supplies must be one of them exactly, as the platform itself checks.
+        String fromEnv = environmentValue(v.name);
+        if (v.type == VarType.ENUM && fromEnv != null && !fromEnv.isEmpty() && !v.values.contains(fromEnv)) {
+            out.add(new Violation(Code.NOT_IN_ENUM, v.name, "must be one of " + String.join(", ", v.values)
+                    + (v.secret ? "" : " (got " + quote(fromEnv) + ")")));
+            return out;
+        }
         Object typed;
         if (empty && v.type != VarType.STRING) {
             typed = null;
@@ -368,9 +377,15 @@ public final class DocuconfChecker {
                         && internal.getMessage().startsWith("docuconf:")) {
                     throw internal;
                 }
-                out.add(new Violation(v.type == VarType.ENUM ? Code.NOT_IN_ENUM : Code.INVALID_TYPE, v.name,
-                        "is not a valid " + describe(v)
-                        + (v.secret || raw == null ? "" : " (got " + quote(raw) + ")")));
+                String got = v.secret || raw == null ? "" : " (got " + quote(raw) + ")";
+                if (outOfRange(v, raw)) {
+                    // SPEC §5: an integer the type cannot hold is out_of_range, not invalid_type.
+                    out.add(new Violation(Code.OUT_OF_RANGE, v.name, "is outside the range of "
+                            + javaType(b) + got));
+                } else {
+                    out.add(new Violation(v.type == VarType.ENUM ? Code.NOT_IN_ENUM : Code.INVALID_TYPE, v.name,
+                            "is not a valid " + describe(v) + got));
+                }
                 return out;
             }
             typed = result != null && result.isBound() ? result.get() : null;
@@ -397,7 +412,8 @@ public final class DocuconfChecker {
         try {
             value = checkForm(v, typed);
         } catch (IllegalArgumentException e) {
-            out.add(new Violation(Code.INVALID_TYPE, v.name, e.getMessage()
+            Code code = e instanceof WireFormat.WireException w ? w.code() : Code.INVALID_TYPE;
+            out.add(new Violation(code, v.name, e.getMessage()
                     + (v.secret || raw == null ? "" : " (got " + quote(raw) + ")")));
             return out;
         }
@@ -514,10 +530,51 @@ public final class DocuconfChecker {
         }
     }
 
+    /**
+     * Whether a value that did not bind is an integer (or a list of integers) too large for the Java type, rather
+     * than text that is not an integer at all.
+     */
+    private static boolean outOfRange(VarSpec v, String raw) {
+        if (raw == null) {
+            return false;
+        }
+        if (v.type == VarType.INT) {
+            return WireFormat.isInteger(raw);
+        }
+        if (v.type != VarType.LIST || !"int".equals(v.items)) {
+            return false;
+        }
+        boolean any = false;
+        for (String item : WireFormat.splitCsv(raw, v.separator)) {
+            String t = item.trim(); // Spring trims csv items.
+            if (!t.isEmpty() && !WireFormat.isInteger(t)) {
+                return false;
+            }
+            any |= !t.isEmpty();
+        }
+        return any;
+    }
+
+    private static String javaType(Bindings.PropertyBinding b) {
+        if (b == null) {
+            return "a 64-bit integer";
+        }
+        String t = b.elementType() != null ? b.elementType() : b.javaType();
+        return t.substring(t.lastIndexOf('.') + 1);
+    }
+
+    /** The value the process environment gives a variable, before any other property source. */
+    private String environmentValue(String name) {
+        PropertySource<?> env = environment.getPropertySources()
+                .get(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+        Object value = env == null ? null : env.getProperty(name);
+        return value == null ? null : value.toString();
+    }
+
     private static Long integer(Object o) {
         if (o instanceof BigInteger b) {
             if (b.bitLength() >= 64) {
-                throw new IllegalArgumentException("is outside the 64-bit integer range");
+                throw new WireFormat.WireException(Code.OUT_OF_RANGE, "is outside the 64-bit integer range");
             }
             return b.longValue();
         }

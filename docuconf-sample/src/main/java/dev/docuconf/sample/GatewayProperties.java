@@ -79,7 +79,7 @@ public class GatewayProperties {
     private List<String> allowedOrigins = List.of();
 
     /** Ports the health checker probes on each upstream. */
-    private List<Integer> probePorts = List.of(8080, 9090);
+    private List<@Min(1) @Max(65535) Integer> probePorts = List.of(8080, 9090);
 
     /** Default per-client rate limits. */
     @Json

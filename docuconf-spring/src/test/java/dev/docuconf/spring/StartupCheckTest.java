@@ -56,7 +56,7 @@ class StartupCheckTest {
         shop.env.put("SHOP_PORT", "9090");
         shop.env.put("SHOP_TIMEOUT", "PT1M30S");
         shop.env.put("SHOP_ORIGINS", "https://a.example,https://b.example");
-        shop.env.put("SHOP_LEVEL", "warn");
+        shop.env.put("SHOP_LEVEL", "WARN");
         shop.env.put("SHOP_LIMITS", "{\"perMinute\":60,\"burst\":10}");
         try (ConfigurableApplicationContext ctx = shop.run()) {
             ShopProperties p = ctx.getBean(ShopProperties.class);
@@ -148,6 +148,39 @@ class StartupCheckTest {
         assertTrue(analysis.getDescription().contains("[too_many_items] SHOP_ORIGINS: has 4 items; at most 3 allowed"),
                 analysis.getDescription());
         assertFalse(analysis.getDescription().contains(ShopFixture.DB_SECRET));
+    }
+
+    @Test
+    void listItemBounds() throws Exception {
+        shop.env.put("SHOP_SHARDS", "0,7,1023");
+        try (ConfigurableApplicationContext ctx = shop.run()) {
+            assertEquals(List.of(0, 7, 1023), ctx.getBean(ShopProperties.class).shards());
+        }
+        shop.env.put("SHOP_SHARDS", "3,1024");
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("out_of_range SHOP_SHARDS"), codes(e));
+        assertTrue(e.getViolations().get(0).message().contains("itemMax 1023"), e.getViolations().toString());
+        shop.env.put("SHOP_SHARDS", "-1");
+        assertEquals(List.of("out_of_range SHOP_SHARDS"), codes(fails()));
+        shop.env.put("SHOP_SHARDS", "1,x");
+        assertEquals(List.of("invalid_type SHOP_SHARDS"), codes(fails()));
+    }
+
+    @Test
+    void integersTheTypeCannotHoldAreOutOfRange() {
+        shop.env.put("SHOP_PORT", "99999999999");
+        shop.env.put("SHOP_SHARDS", "1,99999999999999999999");
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("out_of_range SHOP_PORT", "out_of_range SHOP_SHARDS"), codes(e));
+        assertTrue(e.getViolations().toString().contains("SHOP_PORT: is outside the range of int"),
+                e.getViolations().toString());
+    }
+
+    @Test
+    void enumValuesFromTheEnvironmentAreCaseSensitive() {
+        // The contract lists DEBUG, INFO, WARN; the platform rejects "warn", so the app does too.
+        shop.env.put("SHOP_LEVEL", "warn");
+        assertEquals(List.of("not_in_enum SHOP_LEVEL"), codes(fails()));
     }
 
     @Test

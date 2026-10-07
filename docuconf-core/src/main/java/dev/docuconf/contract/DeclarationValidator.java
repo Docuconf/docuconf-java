@@ -124,6 +124,12 @@ public final class DeclarationValidator {
         if (v.type == VarType.LIST && !"string".equals(v.items) && !"int".equals(v.items)) {
             errors.add(n + ": list items must be string or int");
         }
+        if ((v.itemMin != null || v.itemMax != null) && !(v.type == VarType.LIST && "int".equals(v.items))) {
+            errors.add(n + ": itemMin and itemMax only apply to lists of ints");
+        }
+        if (v.itemMin != null && v.itemMax != null && v.itemMin > v.itemMax) {
+            errors.add(n + ": itemMin is greater than itemMax");
+        }
         if (v.defaultValue != null) {
             checkValue(v, v.defaultValue, "default");
         }

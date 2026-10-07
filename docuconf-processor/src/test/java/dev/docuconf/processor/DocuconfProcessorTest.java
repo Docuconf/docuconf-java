@@ -252,6 +252,75 @@ class DocuconfProcessorTest {
     }
 
     @Test
+    void itemBoundsAndNarrowIntegerTypesAreExported() throws Exception {
+        String record = IMPORTS + """
+                /**
+                 * Sharding.
+                 *
+                 * @param shards Shard ids this instance owns
+                 * @param weights Relative shard weights
+                 * @param offsets Offsets in bytes
+                 * @param retries Retries per request
+                 * @param level Compression level
+                 * @param budget Byte budget
+                 */
+                @Docuconf(service = "shards")
+                @ConfigurationProperties("shards")
+                public record ShardProperties(
+                        @Size(max = 64) List<@Min(0) @Max(1023) Integer> shards,
+                        List<@Positive Short> weights,
+                        List<Long> offsets,
+                        @Min(0) int retries,
+                        byte level,
+                        long budget) {}
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.ShardProperties", record));
+        Contract k = bundle(c).contract();
+        VarSpec shards = k.vars.get("SHARDS_SHARDS");
+        assertEquals(0L, shards.itemMin);
+        assertEquals(1023L, shards.itemMax);
+        assertEquals(64, shards.maxItems);
+        VarSpec weights = k.vars.get("SHARDS_WEIGHTS");
+        assertEquals(1L, weights.itemMin);
+        assertEquals((long) Short.MAX_VALUE, weights.itemMax);
+        VarSpec offsets = k.vars.get("SHARDS_OFFSETS");
+        assertNull(offsets.itemMin);
+        assertNull(offsets.itemMax);
+        VarSpec retries = k.vars.get("SHARDS_RETRIES");
+        assertEquals(0L, retries.min);
+        assertEquals((long) Integer.MAX_VALUE, retries.max);
+        VarSpec level = k.vars.get("SHARDS_LEVEL");
+        assertEquals((long) Byte.MIN_VALUE, level.min);
+        assertEquals((long) Byte.MAX_VALUE, level.max);
+        VarSpec budget = k.vars.get("SHARDS_BUDGET");
+        assertNull(budget.min);
+        assertNull(budget.max);
+        assertTrue(c.contractCue().contains("itemMin: 0"), c.contractCue());
+
+        CueVet.Result vet = CueVet.vet(c.contractCue(), tmp.resolve("vet"));
+        assertEquals(0, vet.exitCode(), vet.output() + "\n" + c.contractCue());
+    }
+
+    @Test
+    void itemBoundsOnAJavaBeanGetterAndADefaultOutOfBounds() throws Exception {
+        String bean = IMPORTS + """
+                @Docuconf
+                @ConfigurationProperties("pool")
+                public class PoolProperties {
+                    /** Ports to probe. */
+                    private List<Integer> ports = List.of(80, 70000);
+
+                    public List<@Min(1) @Max(65535) Integer> getPorts() { return ports; }
+                    public void setPorts(List<Integer> p) { this.ports = p; }
+                }
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.PoolProperties", bean));
+        assertFalse(c.success);
+        assertTrue(c.allErrors().contains("POOL_PORTS") && c.allErrors().contains("itemMax 65535"),
+                c.allErrors());
+    }
+
+    @Test
     void declarationErrorsFailTheBuild() throws Exception {
         String source = IMPORTS + """
                 @Docuconf(service = "bad")

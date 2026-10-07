@@ -115,10 +115,22 @@ public final class VarChecker {
                             "has " + l.size() + " items; at most " + v.maxItems + " allowed"));
                 }
                 if ("int".equals(v.items)) {
-                    for (Object o : l) {
+                    for (int i = 0; i < l.size(); i++) {
+                        Object o = l.get(i);
+                        String got = v.secret ? "" : " (got " + show(o) + ")";
                         if (!(o instanceof Long || o instanceof Integer)) {
-                            out.add(new Violation(Code.INVALID_TYPE, v.name,
-                                    "items must be integers" + (v.secret ? "" : " (got " + show(o) + ")")));
+                            out.add(new Violation(Code.INVALID_TYPE, v.name, "items must be integers" + got));
+                            break;
+                        }
+                        long n = ((Number) o).longValue();
+                        if (v.itemMin != null && n < v.itemMin) {
+                            out.add(new Violation(Code.OUT_OF_RANGE, v.name,
+                                    "item " + i + " is below itemMin " + v.itemMin + got));
+                            break;
+                        }
+                        if (v.itemMax != null && n > v.itemMax) {
+                            out.add(new Violation(Code.OUT_OF_RANGE, v.name,
+                                    "item " + i + " is above itemMax " + v.itemMax + got));
                             break;
                         }
                     }

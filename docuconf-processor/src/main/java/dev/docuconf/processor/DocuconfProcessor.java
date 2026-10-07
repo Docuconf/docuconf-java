@@ -222,7 +222,37 @@ public final class DocuconfProcessor extends AbstractProcessor {
 
     /** A property as Spring's binder sees it. */
     private record Prop(String javaName, String boundName, TypeMirror type, Element element,
-            Map<String, AnnotationMirror> annotations, String doc, Object initializer, List<String> defaultValue) {
+            Map<String, AnnotationMirror> annotations, String doc, Object initializer, List<String> defaultValue,
+            Map<String, AnnotationMirror> itemAnnotations) {
+    }
+
+    /**
+     * Container-element constraints on a list's items ({@code List<@Min(0) Integer>}), from every place the
+     * property's type is written: field, getter, setter, record component or constructor parameter.
+     */
+    private Map<String, AnnotationMirror> itemAnnotations(TypeMirror... types) {
+        List<Object> sources = new ArrayList<>();
+        for (TypeMirror t : types) {
+            TypeMirror item = itemType(t);
+            if (item != null) {
+                sources.add(item);
+            }
+        }
+        return Mirrors.collect(sources);
+    }
+
+    /** The item type of an array or a one-argument collection, or {@code null}. */
+    private static TypeMirror itemType(TypeMirror t) {
+        if (t == null) {
+            return null;
+        }
+        if (t.getKind() == TypeKind.ARRAY) {
+            return ((ArrayType) t).getComponentType();
+        }
+        if (t.getKind() == TypeKind.DECLARED && ((DeclaredType) t).getTypeArguments().size() == 1) {
+            return ((DeclaredType) t).getTypeArguments().get(0);
+        }
+        return null;
     }
 
     private void walk(String root, TypeElement te, String keyPrefix, String javaPrefix, String group, int depth) {
@@ -284,7 +314,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 }
                 Map<String, AnnotationMirror> a = Mirrors.collect(sources);
                 out.add(new Prop(name, boundName(a, name), rc.asType(), rc, a, Docs.param(elements, te, name),
-                        Initializers.ABSENT, defaultValue(a)));
+                        Initializers.ABSENT, defaultValue(a), itemAnnotations(rc.asType(),
+                                rc.getAccessor() == null ? null : rc.getAccessor().getReturnType(),
+                                field == null ? null : field.asType(), param == null ? null : param.asType())));
             }
             return out;
         }
@@ -300,7 +332,8 @@ public final class DocuconfProcessor extends AbstractProcessor {
                     doc = Docs.param(elements, ctor, name);
                 }
                 out.add(new Prop(name, boundName(a, name), param.asType(), param, a, doc, Initializers.ABSENT,
-                        defaultValue(a)));
+                        defaultValue(a), itemAnnotations(param.asType(), field == null ? null : field.asType(),
+                                getter == null ? null : getter.getReturnType())));
             }
             return out;
         }
@@ -342,7 +375,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
                             + " @DefaultValue");
                     init = Initializers.UNKNOWN;
                 }
-                out.add(new Prop(name, boundName(a, name), f.asType(), f, a, doc, init, null));
+                out.add(new Prop(name, boundName(a, name), f.asType(), f, a, doc, init, null,
+                        itemAnnotations(f.asType(), getter == null ? null : getter.getReturnType(),
+                                setter == null ? null : setter.getParameters().get(0).asType())));
             }
         }
         return out;
@@ -584,14 +619,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 }
             }
             case INT -> {
-                if (c.min != null) {
-                    v.min = (c.minExclusive ? c.min.setScale(0, RoundingMode.FLOOR).add(BigDecimal.ONE)
-                            : c.min.setScale(0, RoundingMode.CEILING)).longValueExact();
-                }
-                if (c.max != null) {
-                    v.max = (c.maxExclusive ? c.max.setScale(0, RoundingMode.CEILING).subtract(BigDecimal.ONE)
-                            : c.max.setScale(0, RoundingMode.FLOOR)).longValueExact();
-                }
+                long[] range = intRange(p.type());
+                v.min = intLower(c, range);
+                v.max = intUpper(c, range);
             }
             case FLOAT -> {
                 // Exclusive bounds (@Positive, @DecimalMin(inclusive = false)) have no contract form; they are
@@ -632,6 +662,15 @@ public final class DocuconfProcessor extends AbstractProcessor {
                     v.minItems = 1;
                 }
                 v.maxItems = c.sizeMax;
+                if ("int".equals(v.items)) {
+                    Constraints item = Constraints.read(elements, p.itemAnnotations());
+                    for (String err : item.errors) {
+                        error(p.element(), envName + " items: " + err);
+                    }
+                    long[] range = intRange(itemType(p.type()));
+                    v.itemMin = intLower(item, range);
+                    v.itemMax = intUpper(item, range);
+                }
             }
             case JSON -> {
                 SchemaGenerator g = new SchemaGenerator(elements, types);
@@ -649,6 +688,59 @@ public final class DocuconfProcessor extends AbstractProcessor {
         bindings.vars.put(envName, new Bindings.PropertyBinding(root, javaPath, configKey,
                 typeName(p.type()), kind.elementType(), unit));
         pending.add(new PendingVar(v, p, kind, unit));
+    }
+
+    /**
+     * The range a Java integer type holds when it is narrower than the contract's 64 bits, so the platform never
+     * accepts a value the app cannot hold (SPEC §5); {@code null} for {@code long} and {@code BigInteger}.
+     */
+    private long[] intRange(TypeMirror t) {
+        if (t == null) {
+            return null;
+        }
+        TypeKind k = t.getKind();
+        if (k == TypeKind.DECLARED) {
+            k = switch (((TypeElement) types.asElement(t)).getQualifiedName().toString()) {
+                case "java.lang.Integer" -> TypeKind.INT;
+                case "java.lang.Short" -> TypeKind.SHORT;
+                case "java.lang.Byte" -> TypeKind.BYTE;
+                default -> TypeKind.LONG;
+            };
+        }
+        return switch (k) {
+            case INT -> new long[] {Integer.MIN_VALUE, Integer.MAX_VALUE};
+            case SHORT -> new long[] {Short.MIN_VALUE, Short.MAX_VALUE};
+            case BYTE -> new long[] {Byte.MIN_VALUE, Byte.MAX_VALUE};
+            default -> null;
+        };
+    }
+
+    /** The integer lower bound from the constraints, raised to what the type holds. */
+    private static Long intLower(Constraints c, long[] range) {
+        Long min = null;
+        if (c.min != null) {
+            BigDecimal m = c.minExclusive ? c.min.setScale(0, RoundingMode.FLOOR).add(BigDecimal.ONE)
+                    : c.min.setScale(0, RoundingMode.CEILING);
+            min = m.max(BigDecimal.valueOf(Long.MIN_VALUE)).longValue();
+        }
+        if (range != null && (min == null || min < range[0])) {
+            min = range[0];
+        }
+        return min;
+    }
+
+    /** The integer upper bound from the constraints, lowered to what the type holds. */
+    private static Long intUpper(Constraints c, long[] range) {
+        Long max = null;
+        if (c.max != null) {
+            BigDecimal m = c.maxExclusive ? c.max.setScale(0, RoundingMode.CEILING).subtract(BigDecimal.ONE)
+                    : c.max.setScale(0, RoundingMode.FLOOR);
+            max = m.min(BigDecimal.valueOf(Long.MAX_VALUE)).longValue();
+        }
+        if (range != null && (max == null || max > range[1])) {
+            max = range[1];
+        }
+        return max;
     }
 
     private String description(Map<String, AnnotationMirror> a, String doc) {

@@ -14,8 +14,13 @@
     compile time and validate the environment and mounted files at startup.</description>
   <url>https://github.com/docuconf/docuconf-java</url>
 
-  <!-- Licence pending (Apache-2.0 proposed). Maven Central requires a <licenses> entry, so it is added
-       when the licence is decided; see RELEASING.md. -->
+  <licenses>
+    <license>
+      <name>MIT</name>
+      <url>https://opensource.org/license/mit</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
 
   <developers>
     <developer>

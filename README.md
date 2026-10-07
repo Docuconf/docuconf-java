@@ -133,12 +133,12 @@ How Java maps to the contract:
 | Property `billing.database-url` | Variable `BILLING_DATABASEURL`, Spring's relaxed binding for environment variables (`configKey` keeps the property name). Nested classes add segments: `BILLING_DB_POOLSIZE`. |
 | `String`, `Path`, `Locale`, ... | `string`. `@Size` → `minLength`/`maxLength`; `@NotBlank` → required, `minLength: 1`, `pattern: "\\S"`. |
 | `@Pattern(regexp = "p")` | `pattern: "^(?:p)$"`: `@Pattern` matches the whole value, contract patterns match anywhere (SPEC §4.3). Patterns using Java-only regex features fail the build. |
-| `int`, `long`, `Integer`, ... | `int`, with `@Min`/`@Max`/`@Range`/`@Positive`... |
+| `int`, `long`, `Integer`, ... | `int`, with `@Min`/`@Max`/`@Range`/`@Positive`... A type narrower than 64 bits also exports its own range (`int`/`Integer`: `min: -2147483648`, `max: 2147483647`; likewise `short` and `byte`), so the platform never accepts a value the field cannot hold (SPEC §5). |
 | `double`, `BigDecimal`, ... | `float`, with inclusive `@DecimalMin`/`@DecimalMax`. Exclusive bounds (`@Positive`) have no contract form and are checked only at startup. |
 | `Duration` | `duration` with `encoding: "iso8601"`; `@DurationMin`/`@DurationMax` (Hibernate Validator) → `min`/`max`. Spring's simple format takes one unit (`90s`), so the canonical Go form `1m30s` would not parse; ISO-8601 (`PT1M30S`) does. |
 | `URI`, `URL`, or `@UrlSchemes` | `url` |
-| an `enum` | `enum` with the constant names (Spring also accepts them in any case). |
-| `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (Spring splits comma-separated values; `@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. |
+| an `enum` | `enum` with the constant names. Values are case-sensitive, as the platform checks them: an environment variable must spell the constant exactly (`WARN`, not `warn`), while `application*.yml` keeps Spring's lenient matching. |
+| `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (Spring splits comma-separated values; `@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. Container-element constraints on int items, `List<@Min(0) @Max(1023) Integer>`, → `itemMin`/`itemMax`, checked at startup (`out_of_range`); `Integer`, `Short` and `Byte` items also export their type's range, `Long` items do not. |
 | `@NotNull`/`@NotBlank`/`@NotEmpty` without a default | `required: true` |
 | Field initializer, `@DefaultValue`, value in `application.yml` | `default` (the yml value wins, as in Spring); a required property with one becomes optional. |
 | Value in `application-{profile}.yml` (or a `spring.config.activate.on-profile` document) | `profiles.defaults.{profile}`, selected by `SPRING_PROFILES_ACTIVE`, which is added to the contract as a single profile name defaulting to `profiles.default` (`spring.profiles.active` or `spring.profiles.default` from `application.yml`, else `default`). |
@@ -256,6 +256,47 @@ those values like any other. It never resolves references itself. If a secret st
 
 The message names the scheme, never the reference itself.
 
+## Contract-first mode
+
+To validate against a contract written by hand in CUE instead of declared in Java, export it as JSON and load the
+environment against it with `ContractFirst` (in `docuconf-core`, no Spring needed):
+
+```sh
+cue export ./contract > contract.json   # the package holding contract.#Contract & {...}
+```
+
+```java
+Map<String, Object> values = ContractFirst.boot(Path.of("contract.json"));  // System.getenv(); throws on violations
+ContractFirst.Result r = ContractFirst.load(json, Map.of("PORT", "8080"));    // or any map, without throwing
+```
+
+It parses every wire encoding of SPEC §5 (lists: `csv` with `separator`, `json`, `indexed` as `NAME__0`,
+`NAME__1`, ...; durations: `go`, `iso8601`, `seconds`, `timespan`) and checks constraints with the same code the
+Spring path uses (`VarChecker`). Values are `String` (string, url, enum), `Long`, `BigDecimal`, `Boolean`,
+`Duration`, `List<String>`/`List<Long>`, and the parsed JSON for `json` variables, which are validated against
+their JSON Schema. Unset optional variables are `null`. An unset variable takes the default of the profile its `profiles.selector`
+variable selects, else its own default. File inputs are checked too (existence, size, TLS, CA
+bundles, keystores, text files); a config file is schema-checked only when it is JSON. `boot` writes violations to
+the termination log, as the Spring check does. The contract itself is validated first; an invalid one throws
+`IllegalArgumentException`.
+
+## Conformance
+
+`ConformanceTest` (in `docuconf-core`) runs the shared suite from docuconf-go (`conformance/cases.json`, SPEC §12)
+through the contract-first mode, one JUnit test per case, named by the case `id`:
+
+```sh
+DOCUCONF_CONFORMANCE=../docuconf-go/conformance/cases.json DOCUCONF_REQUIRE_CONFORMANCE=1 \
+  mvn test -pl docuconf-core -Dtest=ConformanceTest
+```
+
+Without `DOCUCONF_CONFORMANCE` it looks for `docuconf-go/conformance/cases.json` in the working directory and its
+parents (so a sibling checkout is found), and skips when there is none unless `DOCUCONF_REQUIRE_CONFORMANCE=1`.
+CI runs it against docuconf-go `main` with both set.
+
+Skipped capability tags: none. Java holds every 64-bit integer (`int64`), and contract-first mode validates `json`
+values against their JSON Schema (`json-schema`).
+
 ## Develop
 
 ```sh
@@ -270,7 +311,9 @@ exported contract is the golden file `docuconf-sample/src/test/resources/golden/
 (regenerate with `mvn test -pl docuconf-sample -am -Ddocuconf.updateGolden=true`). Certificates for tests are
 generated with Bouncy Castle (test scope only).
 
-Not done yet: Markdown docs generation, a contract-first loader for hand-written CUE, multi-profile activation
+Not done yet: Markdown docs generation, multi-profile activation
 (`SPRING_PROFILES_ACTIVE=prod,eu` is rejected by the contract; see SPEC §13 question 5).
 
-Licence: pending (Apache-2.0 proposed). There is no LICENSE file yet.
+## Licence
+
+MIT. See [LICENSE](LICENSE).
