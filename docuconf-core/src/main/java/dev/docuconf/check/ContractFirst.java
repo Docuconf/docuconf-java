@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +29,7 @@ import java.util.function.Function;
  * {@code cue export contract.cue} prints it, with no Java declaration, and returns typed values.
  *
  * <p>Every wire encoding is parsed (SPEC §5): lists as {@code csv} with their separator, {@code json} or
- * {@code indexed} ({@code NAME__0}, {@code NAME__1}, ...); durations as {@code go}, {@code iso8601},
+ * {@code indexed} ({@code NAME__0}, {@code NAME__1}, ..., numbered from 0 with no gap); durations as {@code go}, {@code iso8601},
  * {@code seconds} or {@code timespan}. An unset variable takes the selected profile's default (SPEC §4.4), else
  * its own default; the environment overrides both. Constraints are checked by {@link VarChecker}, the same code
  * that checks declared defaults at compile time and Spring-bound values at startup.
@@ -212,7 +213,7 @@ public final class ContractFirst {
             List<String> warnings) {
         boolean indexed = v.type == VarType.LIST && "indexed".equals(v.encoding);
         String raw = null;
-        List<String> items = null;
+        Map<String, String> items = null;
         if (indexed) {
             items = indexedItems(env, v.name);
         } else {
@@ -232,7 +233,7 @@ public final class ContractFirst {
         // SPEC §11.2: a secret still holding vault:..., op://... or ref+... means its injector did not run.
         Violation reference = InjectorReference.check(v, raw);
         if (reference == null && items != null) {
-            for (String item : items) {
+            for (String item : items.values()) {
                 reference = reference != null ? reference : InjectorReference.check(v, item);
             }
         }
@@ -266,7 +267,7 @@ public final class ContractFirst {
     }
 
     /** Parses a raw value into the form {@link VarChecker} takes, which is also the typed value. */
-    private static Object parse(VarSpec v, String raw, List<String> indexedItems) {
+    private static Object parse(VarSpec v, String raw, Map<String, String> indexedItems) {
         return switch (v.type) {
             case STRING, URL, ENUM -> raw;
             case INT -> WireFormat.parseInt(raw);
@@ -284,12 +285,12 @@ public final class ContractFirst {
         };
     }
 
-    private static List<Object> list(VarSpec v, String raw, List<String> indexedItems) {
+    private static List<Object> list(VarSpec v, String raw, Map<String, String> indexedItems) {
         String encoding = v.encoding == null ? "csv" : v.encoding;
         if (encoding.equals("json")) {
             return WireFormat.parseJsonList(raw, v.items);
         }
-        List<String> items = encoding.equals("indexed") ? indexedItems : WireFormat.splitCsv(raw, v.separator);
+        List<String> items = encoding.equals("indexed") ? inOrder(v.name, indexedItems) : WireFormat.splitCsv(raw, v.separator);
         List<Object> out = new ArrayList<>();
         for (int i = 0; i < items.size(); i++) {
             if (!"int".equals(v.items)) {
@@ -306,16 +307,37 @@ public final class ContractFirst {
         return out;
     }
 
-    /** {@code NAME__0}, {@code NAME__1}, ... up to the first missing index; {@code null} when NAME__0 is unset. */
-    private static List<String> indexedItems(Map<String, String> env, String name) {
-        List<String> items = new ArrayList<>();
-        for (int i = 0;; i++) {
-            String item = env.get(WireFormat.indexedName(name, i));
-            if (item == null) {
-                return i == 0 ? null : items;
+    /**
+     * The items of an indexed list, in order (SPEC §5): every {@code NAME__<n>} whose {@code <n>} is a decimal
+     * index with no leading zero; other suffixes ({@code NAME__HOST}) are not items. {@code null} when no item is
+     * set.
+     */
+    private static Map<String, String> indexedItems(Map<String, String> env, String name) {
+        String prefix = name + "__";
+        Map<String, String> items = null;
+        for (Map.Entry<String, String> e : env.entrySet()) {
+            String key = e.getKey();
+            if (key.startsWith(prefix) && WireFormat.isIndex(key.substring(prefix.length())) && e.getValue() != null) {
+                if (items == null) {
+                    items = new HashMap<>();
+                }
+                items.put(key.substring(prefix.length()), e.getValue());
             }
-            items.add(item);
         }
+        return items;
+    }
+
+    /** The items numbered 0, 1, ...; a gap is {@code invalid_type}, as hosts that stop at it read fewer items. */
+    private static List<String> inOrder(String name, Map<String, String> items) {
+        List<String> out = new ArrayList<>(items.size());
+        for (int i = 0; i < items.size(); i++) {
+            String item = items.get(Integer.toString(i));
+            if (item == null) {
+                throw new WireFormat.WireException(Code.INVALID_TYPE, WireFormat.gapMessage(name + "__", items.keySet()));
+            }
+            out.add(item);
+        }
+        return out;
     }
 
     /** A default from the contract, in the typed form. */

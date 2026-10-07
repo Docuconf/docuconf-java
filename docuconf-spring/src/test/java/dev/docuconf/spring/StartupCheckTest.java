@@ -167,6 +167,36 @@ class StartupCheckTest {
     }
 
     @Test
+    void indexedListItemsFromTheEnvironment() throws Exception {
+        // Spring's relaxed binding reads SHOP_SHARDS_0 and SHOP_SHARDS__0 as list items; SHOP_SHARDS_HOST is not one.
+        shop.env.put("SHOP_SHARDS_0", "5");
+        shop.env.put("SHOP_SHARDS__1", "6");
+        shop.env.put("SHOP_SHARDS_HOST", "x");
+        try (ConfigurableApplicationContext ctx = shop.run()) {
+            assertEquals(List.of(5, 6), ctx.getBean(ShopProperties.class).shards());
+        }
+        // SPEC §5: a gap is invalid_type.
+        shop.env.remove("SHOP_SHARDS__1");
+        shop.env.put("SHOP_SHARDS_2", "7");
+        DocuconfValidationException e = fails();
+        assertEquals(List.of("invalid_type SHOP_SHARDS"), codes(e));
+        assertTrue(e.getViolations().get(0).message().contains("SHOP_SHARDS_1 is not"), e.getViolations().toString());
+        // So is a list that does not start at 0, and an index with a leading zero, which Spring cannot bind.
+        shop.env.remove("SHOP_SHARDS_0");
+        shop.env.remove("SHOP_SHARDS_2");
+        shop.env.put("SHOP_SHARDS_1", "6");
+        assertEquals(List.of("invalid_type SHOP_SHARDS"), codes(fails()));
+        shop.env.remove("SHOP_SHARDS_1");
+        shop.env.put("SHOP_SHARDS_00", "6");
+        assertEquals(List.of("invalid_type SHOP_SHARDS"), codes(fails()));
+        // The comma-separated form wins over items, as Spring reads it.
+        shop.env.put("SHOP_SHARDS", "1,2");
+        try (ConfigurableApplicationContext ctx = shop.run()) {
+            assertEquals(List.of(1, 2), ctx.getBean(ShopProperties.class).shards());
+        }
+    }
+
+    @Test
     void integersTheTypeCannotHoldAreOutOfRange() {
         shop.env.put("SHOP_PORT", "99999999999");
         shop.env.put("SHOP_SHARDS", "1,99999999999999999999");

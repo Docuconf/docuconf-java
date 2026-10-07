@@ -9,6 +9,8 @@ files, licence files and binary data.
 Part of [docuconf](https://github.com/docuconf). See the
 [specification](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md).
 
+**Example:** [`examples/orders/`](examples/orders/), a small Spring Boot web service with its exported contract.
+
 > **Status:** `0.1.0`, not yet published. The contract format is a draft (`v1alpha1`) and the API may change.
 > The Maven groupId `dev.docuconf` assumes the `docuconf.dev` domain; that namespace is **not yet verified** on
 > Maven Central (see [RELEASING.md](RELEASING.md)).
@@ -180,6 +182,9 @@ The configuration does not satisfy the docuconf contract (5 problems):
 - An empty variable means unset for every type but `string` (SPEC §5): docuconf hides it from Spring, so
   `@DefaultValue` and initializers apply.
 - Other Bean Validation constraints on the classes (`@Email`, custom ones) are reported in the same list.
+- Spring's relaxed binding also reads a list from one variable per item (`SHOP_ORIGINS_0`, `SHOP_ORIGINS__1`) when the
+  plain variable is unset. Items must be numbered from 0 with no gap (SPEC §5): `_0` and `_2` without `_1`, a list
+  starting at `_1`, or an index with a leading zero is `invalid_type`, named as such instead of Spring's bind error.
 - `DOCUCONF_FILE_ROOT=./dev` reads `/etc/billing/tls` from `./dev/etc/billing/tls` (also for paths from `pathEnv`).
 - `docuconf.enabled=false` skips the check, for slice tests and build-time tasks.
 
@@ -271,7 +276,7 @@ ContractFirst.Result r = ContractFirst.load(json, Map.of("PORT", "8080"));    //
 ```
 
 It parses every wire encoding of SPEC §5 (lists: `csv` with `separator`, `json`, `indexed` as `NAME__0`,
-`NAME__1`, ...; durations: `go`, `iso8601`, `seconds`, `timespan`) and checks constraints with the same code the
+`NAME__1`, ... numbered from 0 with no gap, other suffixes such as `NAME__HOST` not being items; durations: `go`, `iso8601`, `seconds`, `timespan`) and checks constraints with the same code the
 Spring path uses (`VarChecker`). Values are `String` (string, url, enum), `Long`, `BigDecimal`, `Boolean`,
 `Duration`, `List<String>`/`List<Long>`, and the parsed JSON for `json` variables, which are validated against
 their JSON Schema. Unset optional variables are `null`. An unset variable takes the default of the profile its `profiles.selector`

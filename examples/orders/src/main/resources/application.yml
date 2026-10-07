@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: orders
+# The web server and the log level follow the validated settings.
+server:
+  port: ${orders.port:8080}
+logging:
+  level:
+    root: ${orders.log-level:info}
