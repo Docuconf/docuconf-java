@@ -302,6 +302,70 @@ class DocuconfProcessorTest {
     }
 
     @Test
+    void lengthLimitsAreExported() throws Exception {
+        String record = IMPORTS + """
+                /**
+                 * Batch settings.
+                 *
+                 * @param callback Where to report each run
+                 * @param hook Webhook as a string
+                 * @param limits Run limits as a JSON object
+                 * @param branches Branch codes, two to four characters each
+                 */
+                @Docuconf(service = "batch")
+                @ConfigurationProperties("batch")
+                public record BatchProperties(
+                        @UrlSchemes("https") @MaxLength(24) URI callback,
+                        @UrlSchemes("https") @Size(max = 64) String hook,
+                        @Json @MaxLength(16) Limits limits,
+                        @DefaultValue({"ZÜ01", "BE"}) List<@Size(min = 2, max = 4) String> branches) {
+                    public record Limits(int max) {}
+                }
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.BatchProperties", record));
+        assertTrue(c.success, c.allErrors());
+        Contract k = bundle(c).contract();
+        assertEquals(24, k.vars.get("BATCH_CALLBACK").maxLength);
+        assertEquals(64, k.vars.get("BATCH_HOOK").maxLength);
+        assertEquals(16, k.vars.get("BATCH_LIMITS").maxLength);
+        VarSpec branches = k.vars.get("BATCH_BRANCHES");
+        assertEquals(2, branches.itemMinLength);
+        assertEquals(4, branches.itemMaxLength);
+        assertTrue(c.contractCue().contains("itemMaxLength: 4"), c.contractCue());
+
+        CueVet.Result vet = CueVet.vet(c.contractCue(), tmp.resolve("vet"));
+        assertEquals(0, vet.exitCode(), vet.output() + "\n" + c.contractCue());
+    }
+
+    @Test
+    void lengthLimitDeclarationErrorsFailTheBuild() throws Exception {
+        String record = IMPORTS + """
+                /**
+                 * Bad lengths.
+                 *
+                 * @param port Listen port
+                 * @param ports Worker ports
+                 * @param codes Branch codes
+                 * @param hook Callback URL
+                 */
+                @Docuconf(service = "badlen")
+                @ConfigurationProperties("badlen")
+                public record BadLengths(
+                        @MaxLength(5) int port,
+                        List<@Size(max = 4) Integer> ports,
+                        @DefaultValue({"BE", "ZÜRICH"}) List<@Size(max = 4) String> codes,
+                        @MaxLength(10) @DefaultValue("https://a.example/long") URI hook) {}
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.BadLengths", record));
+        assertFalse(c.success);
+        String errors = c.allErrors();
+        assertTrue(errors.contains("BADLEN_PORT: @MaxLength applies to url and @Json properties"), errors);
+        assertTrue(errors.contains("BADLEN_PORTS: @Size on the items of an int list has no contract form"), errors);
+        assertTrue(errors.contains("BADLEN_CODES: default item 1 is 6 characters, above itemMaxLength 4"), errors);
+        assertTrue(errors.contains("BADLEN_HOOK: default is 22 characters, above maxLength 10"), errors);
+    }
+
+    @Test
     void itemBoundsOnAJavaBeanGetterAndADefaultOutOfBounds() throws Exception {
         String bean = IMPORTS + """
                 @Docuconf

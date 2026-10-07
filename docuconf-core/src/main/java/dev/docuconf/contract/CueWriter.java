@@ -143,7 +143,10 @@ public final class CueWriter {
                 opt("min", v.min);
                 opt("max", v.max);
             }
-            case URL -> opt("schemes", v.schemes);
+            case URL -> {
+                opt("schemes", v.schemes);
+                opt("maxLength", v.maxLength);
+            }
             case ENUM -> value("values", v.values);
             case LIST -> {
                 field("items", v.items);
@@ -155,8 +158,13 @@ public final class CueWriter {
                 opt("maxItems", v.maxItems);
                 opt("itemMin", v.itemMin);
                 opt("itemMax", v.itemMax);
+                opt("itemMinLength", v.itemMinLength);
+                opt("itemMaxLength", v.itemMaxLength);
             }
-            case JSON -> opt("schema", v.schema);
+            case JSON -> {
+                opt("maxLength", v.maxLength);
+                opt("schema", v.schema);
+            }
             default -> {
             }
         }

@@ -10,6 +10,7 @@ import dev.docuconf.Json;
 import dev.docuconf.KeyAlgorithm;
 import dev.docuconf.Keystore;
 import dev.docuconf.KeystoreFile;
+import dev.docuconf.MaxLength;
 import dev.docuconf.Reload;
 import dev.docuconf.Secret;
 import dev.docuconf.TextFile;
@@ -43,6 +44,7 @@ import org.springframework.validation.annotation.Validated;
  * @param shards Shard ids this instance owns
  * @param level Minimum log level
  * @param limits Default per-client rate limits
+ * @param branches Branch codes, two to four characters each
  * @param contact Operator contact address
  * @param tls Certificate the shop serves HTTPS with
  * @param routes Routing table
@@ -63,7 +65,8 @@ public record ShopProperties(
         @Size(max = 3) List<String> origins,
         List<@Min(0) @Max(1023) Integer> shards,
         @DefaultValue("INFO") Level level,
-        @Json RateLimits limits,
+        @Json @MaxLength(30) RateLimits limits,
+        List<@Size(min = 2, max = 4) String> branches,
         @Email String contact,
         @NotNull @TlsFile(value = "/etc/shop/tls", dnsNames = "shop.internal", minRemaining = "720h",
                 keyAlgorithms = {KeyAlgorithm.ECDSA, KeyAlgorithm.RSA}) TlsKeyPair tls,
