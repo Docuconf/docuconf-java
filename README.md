@@ -1,5 +1,7 @@
 # docuconf for Java (Spring Boot)
 
+Documentation: [docuconf.dev](https://docuconf.dev) · [Java guide](https://docuconf.dev/languages/java/)
+
 Typed configuration contracts for Spring Boot `@ConfigurationProperties`. Your properties classes, with the Bean
 Validation annotations you already use, become a CUE contract that your Kubernetes platform checks **before
 deploy**, and that your app checks again **at startup**. It covers environment variables, the
