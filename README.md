@@ -164,8 +164,8 @@ Ordinary Spring Boot configuration properties, marked `@Docuconf`. This is
 ```java
 /**
  * Settings of the orders service. Each property is the environment variable Spring binds to it: {@code port} is
- * {@code ORDERS_PORT}, {@code databaseUrl} is {@code ORDERS_DATABASEURL}. The Javadoc is the contract's
- * description.
+ * {@code ORDERS_PORT}, {@code databaseUrl} is {@code ORDERS_DATABASEURL}. The first sentence of each property's
+ * Javadoc is the contract's description, and the rest is its details, longer docs for {@code docuconf docs}.
  *
  * @param port HTTP listen port
  * @param logLevel Minimum level of the log lines the service writes
@@ -173,6 +173,12 @@ Ordinary Spring Boot configuration properties, marked `@Docuconf`. This is
  * @param allowedOrigins Origins allowed to call the API from a browser
  * @param requestTimeout Time allowed to answer one request
  * @param workerCount Background workers that process new orders
+ *        <p>Each worker holds one connection from the pool of {@code databaseUrl}, so keep this below the
+ *        database's connection limit.
+ *        <ul>
+ *          <li>Raise it when the order queue backs up.</li>
+ *          <li>Lower it when the database is the bottleneck.</li>
+ *        </ul>
  */
 @Docuconf(service = "orders", enumCase = EnumCase.LOWER)
 @Validated
@@ -197,8 +203,9 @@ public record OrdersProperties(
 }
 ```
 
-- Descriptions come from Javadoc (the record's `@param`, the field, or the getter); `@Description("...")`
-  overrides it. Every input needs one of at least five characters.
+- Descriptions come from Javadoc (the record's `@param`, the field, or the getter): its first sentence, as Spring's
+  configuration metadata takes it. `@Description("...")` overrides it. Every input needs one of at least five
+  characters. The rest of the Javadoc is the input's **details** (see [Descriptions and details](#descriptions-and-details)).
 - Defaults come from `@DefaultValue`, field initializers (JavaBeans work too) and `application.yml`.
 - `@Secret` values never print: a record holding one must override `toString()` as above (the build tells you), and
   Lombok classes must mark the field `@ToString.Exclude`.
@@ -392,6 +399,25 @@ the startup check catches whatever still gets through.
 
 Every file annotation takes `name`, `pathEnv`, `reload` (`RESTART` or `WATCH`) and `maxSize`. Mark the property
 `@NotNull` to make the input required. An annotation on a type it does not fit fails the build.
+
+## Descriptions and details
+
+Every input has a **description**: what it is, in one phrase of plain text. It is the first sentence of the
+property's Javadoc (the record component's `@param`, the field, or the getter), which ends at the first period
+followed by white space, or at the first `<p>` or other block element, as for the javadoc tool; `@Description("...")`
+overrides it. An input may also have **details**: CommonMark on why it exists and when to change it, at most 4000
+characters (Unicode code points). The details are the rest of the Javadoc, read by docuconf's annotation processor
+at compile time; they go into the contract for generated docs only and are never read at runtime.
+
+Javadoc HTML becomes CommonMark: `<p>` starts a paragraph, `<ul>`/`<ol>` with `<li>` are lists, `<pre>{@code ...}</pre>`
+is a fenced code block, `{@code x}`, `{@literal x}`, `{@link X}`, `{@value X}` and `<code>` are code spans, `<a href>` is
+a link, `<b>`/`<strong>` and `<i>`/`<em>` are emphasis and `<br>` a line break; other tags are dropped, keeping their
+text. Block tags (`@see`, `@since`, `@deprecated`) are not part of the details. Details over 4000 characters fail
+the build, as a short description does.
+
+`docuconf docs` in the [docuconf CLI](https://github.com/docuconf/docuconf-go) generates CONFIG.md and
+CONFIG.agents.md from the exported contract: `docuconf docs contract.cue -o CONFIG.md`, and
+`--format agents -o CONFIG.agents.md`.
 
 ## How Java maps to the contract
 

@@ -20,8 +20,8 @@ import org.springframework.validation.annotation.Validated;
 
 /**
  * Settings of the orders service. Each property is the environment variable Spring binds to it: {@code port} is
- * {@code ORDERS_PORT}, {@code databaseUrl} is {@code ORDERS_DATABASEURL}. The Javadoc is the contract's
- * description.
+ * {@code ORDERS_PORT}, {@code databaseUrl} is {@code ORDERS_DATABASEURL}. The first sentence of each property's
+ * Javadoc is the contract's description, and the rest is its details, longer docs for {@code docuconf docs}.
  *
  * @param port HTTP listen port
  * @param logLevel Minimum level of the log lines the service writes
@@ -29,6 +29,12 @@ import org.springframework.validation.annotation.Validated;
  * @param allowedOrigins Origins allowed to call the API from a browser
  * @param requestTimeout Time allowed to answer one request
  * @param workerCount Background workers that process new orders
+ *        <p>Each worker holds one connection from the pool of {@code databaseUrl}, so keep this below the
+ *        database's connection limit.
+ *        <ul>
+ *          <li>Raise it when the order queue backs up.</li>
+ *          <li>Lower it when the database is the bottleneck.</li>
+ *        </ul>
  */
 @Docuconf(service = "orders", enumCase = EnumCase.LOWER)
 @Validated
