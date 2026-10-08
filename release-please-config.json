@@ -1,0 +1,109 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "5adb3d236ed3a21d0de57e8ef10c184b50455bdd",
+  "bump-minor-pre-major": true,
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "Features"
+    },
+    {
+      "type": "fix",
+      "section": "Bug Fixes"
+    },
+    {
+      "type": "perf",
+      "section": "Performance Improvements"
+    },
+    {
+      "type": "revert",
+      "section": "Reverts"
+    },
+    {
+      "type": "refactor",
+      "section": "Code Refactoring"
+    },
+    {
+      "type": "docs",
+      "section": "Documentation"
+    },
+    {
+      "type": "deps",
+      "section": "Dependencies"
+    },
+    {
+      "type": "build",
+      "section": "Build System",
+      "hidden": true
+    },
+    {
+      "type": "chore",
+      "section": "Miscellaneous Chores",
+      "hidden": true
+    },
+    {
+      "type": "ci",
+      "section": "Continuous Integration",
+      "hidden": true
+    },
+    {
+      "type": "test",
+      "section": "Tests",
+      "hidden": true
+    },
+    {
+      "type": "style",
+      "section": "Styles",
+      "hidden": true
+    }
+  ],
+  "packages": {
+    ".": {
+      "release-type": "java",
+      "package-name": "docuconf",
+      "include-component-in-tag": false,
+      "extra-files": [
+        {
+          "type": "pom",
+          "path": "pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-bom/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-core/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-processor/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-spring/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-maven-plugin/pom.xml"
+        },
+        {
+          "type": "pom",
+          "path": "docuconf-sample/pom.xml"
+        },
+        {
+          "type": "generic",
+          "path": "examples/orders/pom.xml"
+        },
+        {
+          "type": "generic",
+          "path": "examples/orders-gradle/build.gradle.kts"
+        },
+        {
+          "type": "generic",
+          "path": "README.md"
+        }
+      ]
+    }
+  }
+}

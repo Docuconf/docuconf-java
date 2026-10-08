@@ -4,7 +4,9 @@ docuconf-java publishes these artifacts to Maven Central: `dev.docuconf:docuconf
 `docuconf-processor`, `docuconf-spring` and `docuconf-maven-plugin` (with `docuconf-parent`, their parent POM).
 `docuconf-sample` and the examples are never published.
 
-Releases run from `.github/workflows/release.yml` when a `v*` tag is pushed. Nothing has been published yet.
+Releases are automated with [release-please](https://github.com/googleapis/release-please) (see
+[CONTRIBUTING.md](CONTRIBUTING.md#how-releases-happen)); `.github/workflows/release.yml` publishes each `v*` tag it
+creates. Nothing has been published yet.
 
 ## Before the first release
 
@@ -35,16 +37,30 @@ requires).
 
 ## Each release
 
-1. Make sure `main` is green in CI (Java 17 and 21, Spring Boot 3.5 and 4.1).
-2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`. The workflow sets the version from the tag, runs the
-   tests (with `cue vet`), builds sources and javadoc jars, signs everything, and uploads a deployment to the
-   Central Portal.
-3. The deployment is uploaded with `autoPublish=false`: open the Central Portal, check the deployment's files, and
+1. Merge the open release PR (`chore(main): release X.Y.Z`). It already sets `<version>` in the parent POM, the BOM
+   and every module to the release version, sets the SDK version that the README and the examples
+   (`examples/orders/pom.xml`, `examples/orders-gradle/build.gradle.kts`) name, between their
+   `x-release-please-start-version` markers, and updates `CHANGELOG.md`. The example contracts do not need
+   regenerating: the contract check (the Maven plugin's `check` goal, the Gradle `docuconfCheck` task) ignores
+   `metadata.generator.version`. Make sure CI is green on it (Java 17 and 21, Spring Boot 3.5 and 4.1).
+2. release-please tags the merge commit `vX.Y.Z` and creates the GitHub release with the changelog entries.
+3. `.github/workflows/release.yml` runs on the tag. It sets the version from the tag, runs the tests (with
+   `cue vet`), builds sources and javadoc jars, signs everything, and uploads a deployment to the Central Portal.
+4. The deployment is uploaded with `autoPublish=false`: open the Central Portal, check the deployment's files, and
    press **Publish**. Switch `autoPublish` to `true` in `pom.xml` once the process is trusted.
-4. Bump the development version on `main` (`mvn versions:set -DnewVersion=0.2.0-SNAPSHOT -DprocessAllModules=true`).
-5. The README and the examples (`examples/orders/pom.xml`, `examples/orders-gradle/build.gradle.kts`) name the
-   version as users write it: replace `0.1.0-SNAPSHOT` with the released version there, and drop the README's
-   "build from source" step once the artifacts are on Maven Central.
+5. release-please then opens a snapshot PR (`chore(main): release X.Y.(Z+1)-SNAPSHOT`) that moves the POMs, the
+   README and the examples back to a development version, so the examples keep building against the SDK in this
+   repository. Merge it; it does not release anything.
+6. After the first release only, once the artifacts are on Maven Central: update the README's status line and its
+   "build from source" step (step 1), which assume nothing is published yet.
+
+If the release PR was created with `GITHUB_TOKEN` (no release GitHub App configured), the tag does not trigger
+`release.yml` by itself, so `.github/workflows/release-please.yml` starts it with `gh workflow run`. To redo a
+release by hand: `gh workflow run release.yml --ref vX.Y.Z`.
+
+`release-please-config.json` uses the `java` release type and lists every POM to update in `extra-files`, rather
+than the `maven` type, which rewrites the `<version>` of every `pom.xml` in the repository: that would set the orders
+example's own version (`1.0.0`, recorded in its contract as `appVersion`) to the SDK version.
 
 ## Dry run locally
 

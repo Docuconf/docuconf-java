@@ -23,6 +23,7 @@
     <java.version>17</java.version>
   </properties>
 
+  <!-- x-release-please-start-version: the release PR sets the SDK version here -->
   <!-- docuconf: start bom -->
   <dependencyManagement>
     <dependencies>
@@ -36,6 +37,7 @@
     </dependencies>
   </dependencyManagement>
   <!-- docuconf: end bom -->
+  <!-- x-release-please-end -->
 
   <dependencies>
     <!-- docuconf: start dependency -->
@@ -92,6 +94,7 @@
         </configuration>
       </plugin>
       <!-- docuconf: end processor-paths -->
+      <!-- x-release-please-start-version: the release PR sets the SDK version here -->
       <!-- docuconf: start maven-plugin -->
       <plugin>
         <groupId>dev.docuconf</groupId>
@@ -109,6 +112,7 @@
         </executions>
       </plugin>
       <!-- docuconf: end maven-plugin -->
+      <!-- x-release-please-end -->
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>

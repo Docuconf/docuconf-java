@@ -26,7 +26,7 @@ exactly as this README says. CI builds it, runs these commands and compiles ever
 
 ## 1. Install
 
-Build the SDK and install `0.1.0-SNAPSHOT` into your local Maven repository (`~/.m2`), with Java 17+ and Maven:
+Build the SDK and install `0.1.0-SNAPSHOT` into your local Maven repository (`~/.m2`), with Java 17+ and Maven: <!-- x-release-please-version -->
 
 ```sh
 git clone https://github.com/docuconf/docuconf-java.git
@@ -40,6 +40,7 @@ Once `0.1.0` is on Maven Central, skip this step and use version `0.1.0` below.
 
 Import the BOM, then add the runtime and Bean Validation:
 
+<!-- x-release-please-start-version -->
 ```xml
 <dependencyManagement>
   <dependencies>
@@ -53,6 +54,7 @@ Import the BOM, then add the runtime and Bean Validation:
   </dependencies>
 </dependencyManagement>
 ```
+<!-- x-release-please-end -->
 
 ```xml
 <dependency>
@@ -103,6 +105,7 @@ class path**, so keep every processor you use in the list (Spring's configuratio
 And the Maven plugin, which keeps the contract up to date when only `application.yml` changes and checks the
 committed copy in `mvn verify` (see step 6):
 
+<!-- x-release-please-start-version -->
 ```xml
 <plugin>
   <groupId>dev.docuconf</groupId>
@@ -120,6 +123,7 @@ committed copy in `mvn verify` (see step 6):
   </executions>
 </plugin>
 ```
+<!-- x-release-please-end -->
 
 ### Gradle (Kotlin DSL)
 
@@ -132,6 +136,7 @@ repositories {
 }
 ```
 
+<!-- x-release-please-start-version -->
 ```kotlin
 dependencies {
     implementation(platform("dev.docuconf:docuconf-bom:0.1.0-SNAPSHOT"))
@@ -145,6 +150,7 @@ dependencies {
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
 }
 ```
+<!-- x-release-please-end -->
 
 With the Spring Boot Gradle plugin, its dependency management replaces the two `platform(...)` lines for Spring
 Boot. Gradle has no discovery to turn off: list Lombok in `annotationProcessor` as usual. Add the contract tasks
@@ -288,7 +294,9 @@ mvn verify
 ```
 
 `docuconf:export` compiles and copies the contract to `contract.cue`. In `mvn verify`, the `check` goal fails when
-the committed file differs from the exported one and names the first different line, so CI needs nothing else. The
+the committed file differs from the exported one and names the first different line, so CI needs nothing else. It
+ignores only `metadata.generator.version` (the SDK version), so upgrading the SDK does not by itself make the file
+stale. The
 `refresh` goal recompiles when only `application*.yml` changed, which javac alone would not notice.
 
 With Gradle, add these tasks; `./gradlew docuconfExport` writes `contract.cue`, and `./gradlew check` fails when it
@@ -315,14 +323,17 @@ val docuconfExport by tasks.registering {
     doLast { exported.get().asFile.copyTo(committed.asFile, overwrite = true) }
 }
 
-// ./gradlew check fails when the committed contract.cue is not the exported one.
+// ./gradlew check fails when the committed contract.cue is not the exported one. It ignores only the value of
+// metadata.generator.version, the SDK version, so upgrading the SDK does not by itself make the contract stale.
 val docuconfCheck by tasks.registering {
     val exported = exportedContract
     val committed = layout.projectDirectory.file("contract.cue")
     inputs.file(exported)
     doLast {
-        val now = exported.get().asFile.readText()
-        if (!committed.asFile.exists() || committed.asFile.readText() != now) {
+        val sdkVersion = Regex("""(generator: \{[^{}]*?\bversion: )"[^"]*"""")
+        fun normalized(cue: String) = sdkVersion.replace(cue, "\$1\"\"")
+        val now = normalized(exported.get().asFile.readText())
+        if (!committed.asFile.exists() || normalized(committed.asFile.readText()) != now) {
             throw GradleException("docuconf: contract.cue is out of date; run ./gradlew docuconfExport and commit it")
         }
     }

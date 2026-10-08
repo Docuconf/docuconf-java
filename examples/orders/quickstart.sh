@@ -6,8 +6,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export ORDERS_PORT=${SMOKE_PORT:-18081}
 log=$(mktemp)
+committed=$(mktemp)
 pid=
-trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; rm -f "$log"' EXIT
+trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; rm -f "$log" "$committed"' EXIT
 
 echo "== Run"
 mvn package
@@ -30,8 +31,14 @@ grep -q '^docuconf: 2 configuration problems:$' "$log" || { cat "$log"; echo "FA
 if grep -q '^\s*at ' "$log"; then cat "$log"; echo "FAIL: a stack trace was printed"; exit 1; fi
 
 echo "== Export"
-cp contract.cue "$log"
+cp contract.cue "$committed"
 mvn docuconf:export
-diff -u "$log" contract.cue || { echo "FAIL: the committed contract.cue was not the exported one"; exit 1; }
+# Only metadata.generator.version (the SDK version, which a release PR bumps) may differ.
+# shellcheck disable=SC2016 # a perl substitution, not shell
+sdk_version='s/(generator: \{[^{}]*?\bversion: )"[^"]*"/$1"<generator-version>"/g'
+diff -u <(perl -0pe "$sdk_version" "$committed") <(perl -0pe "$sdk_version" contract.cue) ||
+  { echo "FAIL: the committed contract.cue was not the exported one"; exit 1; }
+# mvn verify checks the committed file, as CI does, so it gets the committed file back.
+cp "$committed" contract.cue
 mvn verify
 echo "PASS"
