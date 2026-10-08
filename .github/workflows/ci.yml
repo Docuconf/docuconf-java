@@ -102,6 +102,28 @@ jobs:
           cp examples/orders/contract.cue "$work/svc/"
           cd "$work" && "$(go env GOPATH)/bin/cue" vet -c ./svc
 
+      - name: "Example: install the docuconf CLI"
+        working-directory: docuconf-go/cmd/docuconf
+        run: |
+          go install .
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # CONFIG.md, CONFIG.agents.md and docs.json are generated from contract.cue by the docuconf CLI of the pinned
+      # docuconf-go; they must match what it writes today. They are generated from the committed contract.cue (release
+      # PRs bump its metadata.generator.version), so restore it in case an earlier step re-exported it. These are the
+      # example README's commands.
+      - name: "Example: generated docs are up to date"
+        working-directory: examples/orders
+        run: |
+          git checkout -- contract.cue
+          docuconf docs contract.cue -o CONFIG.md
+          docuconf docs contract.cue --format agents -o CONFIG.agents.md
+          docuconf docs contract.cue --format model -o docs.json
+          git diff --exit-code -- CONFIG.md CONFIG.agents.md docs.json
+          docuconf docs contract.cue --check CONFIG.md
+          docuconf docs contract.cue --format agents --check CONFIG.agents.md
+          docuconf docs contract.cue --format model --check docs.json
+
       - name: "Example: smoke test"
         run: examples/orders/smoke.sh
 
