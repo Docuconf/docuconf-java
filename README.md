@@ -1,5 +1,7 @@
 # docuconf for Java (Spring Boot)
 
+Documentation: [docuconf.dev](https://docuconf.dev) · [Java guide](https://docuconf.dev/languages/java/)
+
 Typed configuration contracts for Spring Boot `@ConfigurationProperties`. Your properties classes, with the Bean
 Validation annotations you already use, become a CUE contract that your Kubernetes platform checks **before
 deploy**, and that your app checks again **at startup**. It covers environment variables, the
@@ -186,8 +188,9 @@ Ordinary Spring Boot configuration properties, marked `@Docuconf`. This is
 public record OrdersProperties(
         @Min(1) @Max(65535) @DefaultValue("8080") int port,
         @DefaultValue("INFO") LogLevel logLevel,
-        // @Secret: the platform must supply it from a Secret, and docuconf never prints it.
-        @NotNull @Secret @UrlSchemes("postgres") URI databaseUrl,
+        // @Secret: the platform must supply it from a Secret, and docuconf never prints it. @MaxLength bounds the
+        // URL in characters; a longer one fails startup with out_of_range.
+        @NotNull @Secret @UrlSchemes("postgres") @MaxLength(2048) URI databaseUrl,
         @NotEmpty @DefaultValue("http://localhost:3000") List<String> allowedOrigins,
         @DurationMin(seconds = 1) @DurationMax(minutes = 5) @DefaultValue("30s") Duration requestTimeout,
         @Min(1) @Max(64) @DefaultValue("4") int workerCount) {

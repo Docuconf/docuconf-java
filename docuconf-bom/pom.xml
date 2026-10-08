@@ -13,7 +13,7 @@
 
   <name>docuconf BOM</name>
   <description>One version for every docuconf artifact: import it in dependencyManagement.</description>
-  <url>https://github.com/docuconf/docuconf-java</url>
+  <url>https://docuconf.dev/languages/java/</url>
 
   <licenses>
     <license>

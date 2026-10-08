@@ -12,7 +12,7 @@ settings with the secret redacted.
 |---|---|---|
 | `ORDERS_PORT` | int | 1 to 65535, default 8080 |
 | `ORDERS_LOGLEVEL` | enum | `debug`, `info`, `warn`, `error` (the app also takes `WARN` and so on); default `info` |
-| `ORDERS_DATABASEURL` | url | secret, required, scheme `postgres` |
+| `ORDERS_DATABASEURL` | url | secret, required, scheme `postgres`, at most 2048 characters |
 | `ORDERS_ALLOWEDORIGINS` | list of strings, comma-separated | at least 1 item; default `http://localhost:3000` |
 | `ORDERS_REQUESTTIMEOUT` | duration (`PT30S` or `30s`) | 1s to 5m, default 30s |
 | `ORDERS_WORKERCOUNT` | int | 1 to 64, default 4 |
@@ -62,6 +62,23 @@ follows: the docuconf Maven plugin's `refresh` goal recompiles.
 
 [`quickstart.sh`](quickstart.sh) runs these commands and [`smoke.sh`](smoke.sh) checks a running service; CI runs
 both. [`../orders-gradle`](../orders-gradle) builds the same sources with Gradle.
+
+## Generated docs
+
+[`CONFIG.md`](CONFIG.md), [`CONFIG.agents.md`](CONFIG.agents.md) and [`docs.json`](docs.json) are generated from
+`contract.cue` by the `docuconf` CLI from [docuconf-go](https://github.com/docuconf/docuconf-go); never edit them by
+hand. The first is the reference for developers, the second the rules and facts AI agents need to change the code or
+set deployment values, and the third the docs model both are rendered from. Regenerate them after exporting the
+contract:
+
+```sh
+docuconf docs contract.cue -o CONFIG.md
+docuconf docs contract.cue --format agents -o CONFIG.agents.md
+docuconf docs contract.cue --format model -o docs.json
+```
+
+CI runs the same commands with `--check` and fails when a file is out of date. `ORDERS_WORKERCOUNT` shows where the
+text comes from: the first sentence of its Javadoc is the description, and the rest its details.
 
 ## Deploy
 

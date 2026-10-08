@@ -28,6 +28,7 @@ contract.#Contract & {
 			secret: true
 			configKey: "orders.database-url"
 			schemes: ["postgres"]
+			maxLength: 2048
 		}
 		ORDERS_LOGLEVEL: {
 			type: "enum"
