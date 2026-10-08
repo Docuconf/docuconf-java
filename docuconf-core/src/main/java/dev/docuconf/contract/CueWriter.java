@@ -112,6 +112,9 @@ public final class CueWriter {
         open(label(v.name));
         field("type", v.type.id());
         field("description", v.description);
+        if (v.details != null) {
+            field("details", v.details);
+        }
         if (v.required) {
             line("required: true");
         }
@@ -179,6 +182,9 @@ public final class CueWriter {
             field("format", f.format);
         }
         field("description", f.description);
+        if (f.details != null) {
+            field("details", f.details);
+        }
         if (f.required) {
             line("required: true");
         }

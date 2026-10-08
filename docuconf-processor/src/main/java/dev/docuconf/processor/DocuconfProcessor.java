@@ -334,7 +334,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
                     sources.add(param);
                 }
                 Map<String, AnnotationMirror> a = Mirrors.collect(sources);
-                out.add(new Prop(name, boundName(a, name), rc.asType(), rc, a, Docs.param(elements, te, name),
+                out.add(new Prop(name, boundName(a, name), rc.asType(), rc, a, Docs.rawParam(elements, te, name),
                         Initializers.ABSENT, defaultValue(a), itemAnnotations(rc.asType(),
                                 rc.getAccessor() == null ? null : rc.getAccessor().getReturnType(),
                                 field == null ? null : field.asType(), param == null ? null : param.asType())));
@@ -348,9 +348,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 VariableElement field = SchemaGenerator.field(te, name);
                 ExecutableElement getter = SchemaGenerator.method(te, name, true);
                 Map<String, AnnotationMirror> a = Mirrors.collect(listOf(param, param.asType(), field, getter));
-                String doc = Docs.of(elements, field);
+                String doc = Docs.main(elements, field);
                 if (doc == null) {
-                    doc = Docs.param(elements, ctor, name);
+                    doc = Docs.rawParam(elements, ctor, name);
                 }
                 out.add(new Prop(name, boundName(a, name), param.asType(), param, a, doc, Initializers.ABSENT,
                         defaultValue(a), itemAnnotations(param.asType(), field == null ? null : field.asType(),
@@ -382,9 +382,9 @@ public final class DocuconfProcessor extends AbstractProcessor {
                     sources.add(setter.getParameters().get(0));
                 }
                 Map<String, AnnotationMirror> a = Mirrors.collect(sources);
-                String doc = Docs.of(elements, f);
+                String doc = Docs.main(elements, f);
                 if (doc == null) {
-                    doc = Docs.of(elements, getter);
+                    doc = Docs.main(elements, getter);
                 }
                 Object init = Initializers.ABSENT;
                 if (initializers != null) {
@@ -703,6 +703,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
             return;
         }
         VarSpec v = new VarSpec(envName, kind.type(), description(a, p.doc()));
+        v.details = Docs.split(p.doc()).details();
         v.configKey = configKey;
         v.secret = a.containsKey(D + "Secret");
         if (v.secret) {
@@ -916,9 +917,13 @@ public final class DocuconfProcessor extends AbstractProcessor {
         return max;
     }
 
+    /**
+     * An input's description (SPEC section 14.7): {@code @Description}, else the first sentence of its Javadoc.
+     * The rest of the Javadoc is its details ({@link Docs#split}).
+     */
     private String description(Map<String, AnnotationMirror> a, String doc) {
         AnnotationMirror d = a.get(D + "Description");
-        return d != null ? Mirrors.string(elements, d, "value") : doc;
+        return d != null ? Mirrors.string(elements, d, "value") : Docs.split(doc).description();
     }
 
     private final Set<String> toStringChecked = new java.util.HashSet<>();
@@ -1035,6 +1040,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
             return;
         }
         FileSpec f = new FileSpec(name, type, description(a, p.doc()), path);
+        f.details = Docs.split(p.doc()).details();
         Constraints c = Constraints.read(elements, a);
         f.required = c.requiresValue();
         f.secret = f.secret || a.containsKey(D + "Secret");

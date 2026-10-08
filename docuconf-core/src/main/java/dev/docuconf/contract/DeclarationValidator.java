@@ -79,6 +79,7 @@ public final class DeclarationValidator {
                     + " service (SPEC section 10)");
         }
         description(n, v.description);
+        details(n, v.details);
         if (v.required && v.defaultValue != null) {
             errors.add(n + ": a required variable cannot have a default");
         }
@@ -216,12 +217,41 @@ public final class DeclarationValidator {
         }
     }
 
+    /** The most characters (Unicode code points) an input's details may have (SPEC section 4.2). */
+    public static final int MAX_DETAILS = 4000;
+
+    /** SPEC section 4.2: details are optional, but not blank and at most {@link #MAX_DETAILS} characters. */
+    private void details(String n, String d) {
+        String problem = detailsProblem(d);
+        if (problem != null) {
+            errors.add(n + ": " + problem);
+        }
+    }
+
+    /**
+     * Why {@code details} cannot go in a contract, or {@code null} when it can (or is absent).
+     *
+     * @param details an input's details, or {@code null}
+     * @return the problem, or {@code null}
+     */
+    public static String detailsProblem(String details) {
+        if (details == null) {
+            return null;
+        }
+        if (details.isBlank()) {
+            return "details must not be blank";
+        }
+        int n = details.codePointCount(0, details.length());
+        return n > MAX_DETAILS ? "details are " + n + " characters (Unicode code points); the most is " + MAX_DETAILS : null;
+    }
+
     private void file(Contract c, FileSpec f, Map<String, String> mountDirs, Map<String, String> pathEnvs) {
         String n = f.name;
         if (!Names.INPUT_NAME.matcher(n).matches()) {
             errors.add(n + ": file input names must be DNS labels of at most 42 characters, starting with a letter");
         }
         description(n, f.description);
+        details(n, f.details);
         if (f.path == null || !ABS_PATH.matcher(f.path).matches() || f.path.contains("//") || f.path.endsWith("/")
                 || f.path.matches(".*(^|/)\\.\\.?(/|$).*")) {
             errors.add(n + ": path " + f.path + " must be absolute and normalised");

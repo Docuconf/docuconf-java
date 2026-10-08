@@ -56,6 +56,7 @@ contract.#Contract & {
 		ORDERS_WORKERCOUNT: {
 			type: "int"
 			description: "Background workers that process new orders"
+			details: "Each worker holds one connection from the pool of `databaseUrl`, so keep this below the database's connection limit.\n\n- Raise it when the order queue backs up.\n- Lower it when the database is the bottleneck."
 			configKey: "orders.worker-count"
 			min: 1
 			max: 64

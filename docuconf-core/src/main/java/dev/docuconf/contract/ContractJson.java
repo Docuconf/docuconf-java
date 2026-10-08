@@ -111,6 +111,7 @@ public final class ContractJson {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("type", v.type.id());
         m.put("description", v.description);
+        put(m, "details", v.details);
         if (v.required) {
             m.put("required", true);
         }
@@ -149,6 +150,7 @@ public final class ContractJson {
         m.put("type", f.type.id());
         put(m, "format", f.format);
         m.put("description", f.description);
+        put(m, "details", f.details);
         if (f.required) {
             m.put("required", true);
         }
@@ -277,6 +279,7 @@ public final class ContractJson {
         vars.forEach((name, o) -> {
             Map<String, Object> vm = (Map<String, Object>) o;
             VarSpec v = new VarSpec(name, VarType.of((String) vm.get("type")), (String) vm.get("description"));
+            v.details = (String) vm.get("details");
             v.required = Boolean.TRUE.equals(vm.get("required"));
             v.secret = Boolean.TRUE.equals(vm.get("secret"));
             v.group = (String) vm.get("group");
@@ -311,6 +314,7 @@ public final class ContractJson {
             Map<String, Object> fm = (Map<String, Object>) o;
             FileSpec f = new FileSpec(name, FileType.of((String) fm.get("type")), (String) fm.get("description"),
                     (String) fm.get("path"));
+            f.details = (String) fm.get("details");
             f.format = (String) fm.get("format");
             f.required = Boolean.TRUE.equals(fm.get("required"));
             f.secret = f.secret || Boolean.TRUE.equals(fm.get("secret"));

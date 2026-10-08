@@ -11,6 +11,12 @@ public final class FileSpec {
     public FileType type;
     /** The description, at least five characters. */
     public String description;
+    /**
+     * Longer documentation for generated docs, in CommonMark (SPEC section 4.2): the Javadoc after its first
+     * sentence. Not blank, at most 4000 characters (Unicode code points); never read at runtime. {@code null} when
+     * the input has none.
+     */
+    public String details;
     /** Whether the platform must supply it. */
     public boolean required;
     /** Whether its content is secret. Always true for TLS and keystores. */
