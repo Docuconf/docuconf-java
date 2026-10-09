@@ -591,10 +591,7 @@ on any skipped case.
 (`conformance/export/fixture.yaml`) as a `@ConfigurationProperties` class,
 [`FixtureProperties`](docuconf-processor/src/test/resources/export-fixture/FixtureProperties.java), exports it and
 runs `docuconf conformance export --golden conformance/export/golden.cue` on the result (the CLI from `DOCUCONF_CLI`
-or the `PATH`). One difference is known, and the test asserts exactly that one: Spring exports every variable's
-`configKey`, its real binding key (`app-name`), which the golden contract leaves out except for `APP_NAME`, whose
-key there is `.NET`-style (`App:Name`). An overlay is rendered at that key (SPEC section 4.7), so docuconf-spring
-keeps it. `GoldenContractTest` in `docuconf-sample` still compares this SDK's own, larger fixture with its golden
+or the `PATH`), which must exit 0 with no differences. `GoldenContractTest` in `docuconf-sample` still compares this SDK's own, larger fixture with its golden
 file.
 
 ## Troubleshooting

@@ -17,13 +17,7 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * The shared export check (SPEC §11.2 item 3, §12): the conformance suite's export fixture, declared with
  * {@code @ConfigurationProperties} in {@code src/test/resources/export-fixture}, exports to a contract that
- * {@code docuconf conformance export --golden golden.cue} accepts.
- *
- * <p>One difference is known and asserted exactly, so any other fails the test: Spring's export always carries
- * each variable's {@code configKey}, its real binding key ({@code app-name}), which the golden contract leaves out,
- * except for {@code APP_NAME}, where it has the .NET-style key {@code App:Name} that no Spring property can have. A
- * Spring {@code configKey} is the key a config-file overlay is rendered at (SPEC §4.7), so docuconf-spring cannot
- * drop or rename it. Every other field matches the golden contract as data.
+ * {@code docuconf conformance export --golden golden.cue} accepts with no differences.
  *
  * <p>{@code golden.cue} is found next to {@code DOCUCONF_CONFORMANCE} ({@code ../export/golden.cue}), else in
  * {@code $DOCUCONF_GO_DIR/conformance/export}; the docuconf CLI through {@code DOCUCONF_CLI}, else {@code docuconf}
@@ -62,26 +56,11 @@ class ExportConformanceTest {
         int status = p.waitFor();
         List<String> differences = out.lines().filter(l -> !l.startsWith("docuconf conformance:")
                 && !l.endsWith(" matches " + golden)).toList();
-        assertEquals(KNOWN_DIFFERENCES, differences, "docuconf conformance export (exit " + status + "):\n" + out
-                + "\nexported:\n" + c.contractCue());
-        assertEquals(KNOWN_DIFFERENCES.isEmpty(), status == 0, out);
+        String report = "docuconf conformance export (exit " + status + "):\n" + out + "\nexported:\n"
+                + c.contractCue();
+        assertEquals(List.of(), differences, report);
+        assertEquals(0, status, report);
     }
-
-    /** Spring's configKey on every variable; see the class comment. */
-    static final List<String> KNOWN_DIFFERENCES = List.of(
-            "vars.ALLOWED_ORIGINS.configKey: not in the golden contract (exported \"allowed-origins\")",
-            "vars.APP_NAME.configKey: golden \"App:Name\", exported \"app-name\"",
-            "vars.DATABASE_URL.configKey: not in the golden contract (exported \"database-url\")",
-            "vars.DEBUG.configKey: not in the golden contract (exported \"debug\")",
-            "vars.LOG_LEVEL.configKey: not in the golden contract (exported \"log-level\")",
-            "vars.OLD_PORT.configKey: not in the golden contract (exported \"old-port\")",
-            "vars.PARTNER_PASSWORD.configKey: not in the golden contract (exported \"partner-password\")",
-            "vars.PORT.configKey: not in the golden contract (exported \"port\")",
-            "vars.RATE_LIMITS.configKey: not in the golden contract (exported \"rate-limits\")",
-            "vars.REQUEST_TIMEOUT.configKey: not in the golden contract (exported \"request-timeout\")",
-            "vars.SHARDS.configKey: not in the golden contract (exported \"shards\")",
-            "vars.TRACE_RATIO.configKey: not in the golden contract (exported \"trace-ratio\")",
-            "vars.WEBHOOK_KEYS.configKey: not in the golden contract (exported \"webhook-keys\")");
 
     static Path golden() {
         String cases = System.getenv("DOCUCONF_CONFORMANCE");
