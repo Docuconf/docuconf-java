@@ -215,6 +215,21 @@ public record OrdersProperties(
 - Mistakes fail the build with a file and line: a missing description, a default that breaks its own constraint,
   an annotation that does not fit the type (`@UrlSchemes` on an `int`), a `@Secret` with a default.
 
+Each `@Docuconf` class of the service goes into the same contract, and its prefix names its variables. The
+example's [`WebhookProperties`](examples/orders/src/main/java/dev/docuconf/examples/orders/WebhookProperties.java)
+is `WEBHOOK_KEYS`, a secret list of one or two keys of 32 to 256 characters each, which lets a key be rotated
+without downtime ([SPEC section 6.1](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation)):
+
+```java
+@Docuconf(service = "orders")
+@Validated
+@ConfigurationProperties("webhook")
+public record WebhookProperties(
+        // @Secret: from a Secret only, never printed. @Size bounds the list to 1 or 2 keys, and the @Size on the
+        // item type bounds each key, so an empty or truncated key fails startup with out_of_range.
+        @Secret @Size(min = 1, max = 2) List<@Size(min = 32, max = 256) String> keys) {
+```
+
 ## 3. Run
 
 ```sh

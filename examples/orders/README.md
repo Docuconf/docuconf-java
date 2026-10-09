@@ -5,8 +5,10 @@ A small Spring Boot web service whose settings are a `@ConfigurationProperties` 
 project (parent `spring-boot-starter-parent`), set up exactly as the [SDK README](../../README.md) says, so it is
 what yours looks like. The docuconf annotation processor turns the record, its Bean Validation annotations and its
 Javadoc into [`contract.cue`](contract.cue) at compile time, and docuconf checks the environment against that
-contract at startup, before Spring binds the record. `GET /healthz` returns `ok`; `GET /config` returns the typed
-settings with the secret redacted.
+contract at startup, before Spring binds the record. A second record,
+[`WebhookProperties`](src/main/java/dev/docuconf/examples/orders/WebhookProperties.java), holds the webhook key set
+under its own prefix. `GET /healthz` returns `ok`; `GET /config` returns the typed settings with the secrets
+redacted; `POST /webhooks/payments` accepts a webhook signed with any key in the set.
 
 | Variable | Type | Rules |
 |---|---|---|
@@ -16,8 +18,10 @@ settings with the secret redacted.
 | `ORDERS_ALLOWEDORIGINS` | list of strings, comma-separated | at least 1 item; default `http://localhost:3000` |
 | `ORDERS_REQUESTTIMEOUT` | duration (`PT30S` or `30s`) | 1s to 5m, default 30s |
 | `ORDERS_WORKERCOUNT` | int | 1 to 64, default 4 |
+| `WEBHOOK_KEYS` | list of strings, comma-separated | secret, optional; 1 to 2 keys of 32 to 256 characters each |
 
-The names are the ones Spring's relaxed binding reads for `orders.port`, `orders.log-level` and so on.
+The names are the ones Spring's relaxed binding reads for `orders.port`, `orders.log-level`, `webhook.keys` and so
+on.
 
 ## Run it
 
@@ -28,7 +32,7 @@ mvn package
 ORDERS_DATABASEURL='postgres://orders:secret@localhost:5432/orders' java -jar target/orders.jar
 ```
 
-`curl localhost:8080/config` shows the settings, with `databaseUrl` as `***`.
+`curl localhost:8080/config` shows the settings, with `databaseUrl` and `webhookKeys` as `***`, set or not.
 
 ## When the configuration is wrong
 
@@ -52,6 +56,39 @@ docuconf: 2 configuration problems:
 ```
 
 In Kubernetes the same lines go to `/dev/termination-log`, so `kubectl describe pod` shows them.
+
+## Rotate a key
+
+`WEBHOOK_KEYS` is a key set: `POST /webhooks/payments` accepts a body whose `X-Signature` header is the hex
+HMAC-SHA256 of the body under any key in the list
+([`Webhooks`](src/main/java/dev/docuconf/examples/orders/Webhooks.java)). It is one comma-separated value, so one
+Kubernetes Secret key holds it:
+
+```yaml
+WEBHOOK_KEYS: # a key set: one Secret key holding "old,new" while rotating
+  secretKeyRef: {name: orders-webhooks, key: keys}
+```
+
+A variable is read once, at start, so a new key reaches the service only when the pods restart; with two keys valid
+at once, no webhook is turned away while that happens:
+
+1. Add the new key as the second item (`old,new` in the Secret), and roll out.
+2. Switch the sender to the new key.
+3. Remove the old key (`new`), and roll out.
+
+The contract allows 1 or 2 keys of 32 to 256 characters each, so a trailing comma or a truncated key stops the
+service at startup instead of locking out the sender:
+
+```text
+docuconf: 1 configuration problem:
+
+    [out_of_range] WEBHOOK_KEYS: item 1 is 0 characters, below itemMinLength 32
+```
+
+[`WebhooksTest`](src/test/java/dev/docuconf/examples/orders/WebhooksTest.java) walks through a rotation, and
+[`smoke.sh`](smoke.sh) posts webhooks signed with both keys.
+[SPEC section 6.1](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation) covers rotation in
+general.
 
 ## Test, export, check
 
@@ -78,10 +115,12 @@ docuconf docs contract.cue --format model -o docs.json
 ```
 
 CI runs the same commands with `--check` and fails when a file is out of date. `ORDERS_WORKERCOUNT` shows where the
-text comes from: the first sentence of its Javadoc is the description, and the rest its details.
+text comes from: the first sentence of its Javadoc is the description, and the rest its details. `WEBHOOK_KEYS`'s
+details carry its rotation steps as a numbered list.
 
 ## Deploy
 
 The platform team deploys against `contract.cue`, not the Java code: `docuconf vet -contract contract.cue -values
-values.yaml` checks their values, and `docuconf render` produces the container's environment. A missing database URL
-or an out-of-range port is caught before deploy, and the startup check catches whatever still gets through.
+deploy/values.yaml` checks their values ([`deploy/values.yaml`](deploy/values.yaml); CI runs it), and
+`docuconf render` produces the container's environment. A missing database URL or an out-of-range port is caught
+before deploy, and the startup check catches whatever still gets through.
