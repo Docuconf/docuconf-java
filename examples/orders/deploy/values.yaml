@@ -1,0 +1,8 @@
+# values.yaml: what the platform sets each variable to. docuconf vet -contract contract.cue -values deploy/values.yaml
+ORDERS_LOGLEVEL: warn
+ORDERS_ALLOWEDORIGINS: [https://shop.example.com]
+ORDERS_WORKERCOUNT: 8
+ORDERS_DATABASEURL: # a secret: always a reference, never a literal
+  secretKeyRef: {name: orders-db, key: url}
+WEBHOOK_KEYS: # a key set: one Secret key holding "old,new" while rotating
+  secretKeyRef: {name: orders-webhooks, key: keys}
