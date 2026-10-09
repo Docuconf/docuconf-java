@@ -171,11 +171,11 @@ public final class DocuconfProcessor extends AbstractProcessor {
         if (prefix == null || prefix.isEmpty()) {
             prefix = Mirrors.string(elements, cp, "value");
         }
-        if (prefix == null || prefix.isEmpty()) {
-            error(te, "docuconf needs a @ConfigurationProperties prefix, such as \"billing\"");
-            return;
+        if (prefix == null) {
+            prefix = "";
         }
-        if (!prefix.matches("[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*")) {
+        // An empty prefix binds properties at the root, as Spring allows: port is the variable PORT.
+        if (!prefix.isEmpty() && !prefix.matches("[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*")) {
             error(te, "@ConfigurationProperties prefix \"" + prefix + "\" must be lower-case kebab-case");
             return;
         }
@@ -283,7 +283,8 @@ public final class DocuconfProcessor extends AbstractProcessor {
             if (a.containsKey(D + "External")) {
                 continue;
             }
-            String configKey = keyPrefix + "." + Names.dashed(p.boundName());
+            String configKey = keyPrefix.isEmpty() ? Names.dashed(p.boundName())
+                    : keyPrefix + "." + Names.dashed(p.boundName());
             String javaPath = javaPrefix.isEmpty() ? p.javaName() : javaPrefix + "." + p.javaName();
             String propGroup = groupOf(null, a);
             if (propGroup == null) {
@@ -512,6 +513,8 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 return Kind.var(VarType.BOOL);
             case "java.time.Duration":
                 return Kind.var(VarType.DURATION);
+            case D + "KeySet":
+                return Kind.var(VarType.KEY_SET);
             case "java.net.URI", "java.net.URL":
                 return Kind.var(VarType.URL);
             case "java.lang.String":
@@ -640,8 +643,16 @@ public final class DocuconfProcessor extends AbstractProcessor {
                     problems.add("@" + simple(name) + " applies to Duration, not " + type);
                 }
             }
-            if (a.containsKey("org.springframework.boot.convert.Delimiter") && kind.type() != VarType.LIST) {
-                problems.add("@Delimiter applies to a list, set or array, not " + type);
+            if (a.containsKey("org.springframework.boot.convert.Delimiter") && kind.type() != VarType.LIST
+                    && kind.type() != VarType.KEY_SET) {
+                problems.add("@Delimiter applies to a list, set, array or KeySet, not " + type);
+            }
+            if (a.containsKey(D + "KeySetLimits") && kind.type() != VarType.KEY_SET) {
+                problems.add("@KeySetLimits applies to KeySet, not " + type);
+            }
+            if (kind.type() == VarType.KEY_SET && (a.containsKey(BV + "Size") || a.containsKey(BV + "NotEmpty"))) {
+                problems.add("a KeySet is bounded with @KeySetLimits(minKeys, maxKeys, keyMinLength,"
+                        + " keyMaxLength), not @" + (a.containsKey(BV + "Size") ? "Size" : "NotEmpty"));
             }
         }
         for (String problem : problems) {
@@ -705,8 +716,10 @@ public final class DocuconfProcessor extends AbstractProcessor {
         VarSpec v = new VarSpec(envName, kind.type(), description(a, p.doc()));
         v.details = Docs.split(p.doc()).details();
         v.configKey = configKey;
-        v.secret = a.containsKey(D + "Secret");
-        if (v.secret) {
+        // A key set is always secret (SPEC §4.3); KeySet's toString() never prints its keys.
+        v.secret = a.containsKey(D + "Secret") || kind.type() == VarType.KEY_SET;
+        if (a.containsKey(D + "Secret")) {
+            // A KeySet prints as [redacted] on its own, so a record holding one needs no toString() override.
             secretToString(p, envName);
         }
         v.group = group;
@@ -714,7 +727,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
         if (ex != null) {
             v.examples = Mirrors.strings(elements, ex, "value");
         }
-        v.deprecated = deprecation(root, a);
+        v.deprecated = deprecation(root, a, false);
         Constraints c = Constraints.read(elements, a);
         for (String err : c.errors) {
             error(p.element(), envName + ": " + err);
@@ -816,6 +829,30 @@ public final class DocuconfProcessor extends AbstractProcessor {
                         v.itemMinLength = 1;
                     }
                     v.itemMaxLength = item.sizeMax;
+                }
+            }
+            case KEY_SET -> {
+                v.encoding = "csv";
+                AnnotationMirror delim = a.get("org.springframework.boot.convert.Delimiter");
+                v.separator = delim == null ? "," : Mirrors.string(elements, delim, "value");
+                if (v.separator.isEmpty() || v.separator.equals("-")) {
+                    error(p.element(), envName + ": @Delimiter(\"" + v.separator + "\") cannot be rendered");
+                }
+                AnnotationMirror limits = a.get(D + "KeySetLimits");
+                v.minKeys = 1;
+                v.maxKeys = 2;
+                if (limits != null) {
+                    int minKeys = (int) Mirrors.number(elements, limits, "minKeys");
+                    int maxKeys = (int) Mirrors.number(elements, limits, "maxKeys");
+                    int keyMin = (int) Mirrors.number(elements, limits, "keyMinLength");
+                    int keyMax = (int) Mirrors.number(elements, limits, "keyMaxLength");
+                    v.minKeys = minKeys;
+                    v.maxKeys = maxKeys;
+                    v.keyMinLength = keyMin == 0 ? null : keyMin;
+                    v.keyMaxLength = keyMax == 0 ? null : keyMax;
+                    if (minKeys < 1 || keyMin < 0 || keyMax < 0) {
+                        error(p.element(), envName + ": @KeySetLimits bounds must be positive (minKeys at least 1)");
+                    }
                 }
             }
             case JSON -> {
@@ -969,12 +1006,18 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 : Names.envName(configKey);
     }
 
-    private Deprecation deprecation(String root, Map<String, AnnotationMirror> a) {
+    /**
+     * A property's deprecation: {@code @DeprecatedConfigurationProperty(reason, replacement)}, or {@code @Deprecated}.
+     * The replacement is a configuration key, exported as the variable it maps to; for a file input it is the
+     * replacing file input's name.
+     */
+    private Deprecation deprecation(String root, Map<String, AnnotationMirror> a, boolean file) {
         AnnotationMirror dcp = a.get("org.springframework.boot.context.properties.DeprecatedConfigurationProperty");
         if (dcp != null) {
             String reason = Mirrors.string(elements, dcp, "reason");
             String replacement = Mirrors.string(elements, dcp, "replacement");
-            String replacedBy = replacement == null || replacement.isEmpty() ? null : envName(root, replacement);
+            String replacedBy = replacement == null || replacement.isEmpty() ? null
+                    : file ? replacement : envName(root, replacement);
             return new Deprecation(reason == null || reason.isEmpty() ? "Deprecated" : reason, replacedBy);
         }
         if (a.containsKey("java.lang.Deprecated")) {
@@ -1048,7 +1091,7 @@ public final class DocuconfProcessor extends AbstractProcessor {
             secretToString(p, name);
         }
         f.group = group;
-        f.deprecated = deprecation(root, a);
+        f.deprecated = deprecation(root, a, true);
         String pathEnv = Mirrors.string(elements, m, "pathEnv");
         f.pathEnv = pathEnv == null || pathEnv.isEmpty() ? null : pathEnv;
         f.reload = Mirrors.string(elements, m, "reload").toLowerCase(Locale.ROOT);
@@ -1094,7 +1137,8 @@ public final class DocuconfProcessor extends AbstractProcessor {
                 f.format = Mirrors.string(elements, m, "format").toLowerCase(Locale.ROOT);
                 String pw = Mirrors.string(elements, m, "passwordProperty");
                 if (pw != null && !pw.isEmpty()) {
-                    passwords.add(new PendingPassword(f, root, keyPrefix + "." + Names.dashed(pw), p.element()));
+                    passwords.add(new PendingPassword(f, root, keyPrefix.isEmpty() ? Names.dashed(pw)
+                            : keyPrefix + "." + Names.dashed(pw), p.element()));
                 }
             }
             case TEXT -> {

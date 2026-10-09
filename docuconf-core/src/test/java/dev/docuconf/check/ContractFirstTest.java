@@ -43,6 +43,44 @@ class ContractFirstTest {
             """;
 
     @Test
+    void aKeySetAndADeprecatedVariable() {
+        String contract = """
+                {"apiVersion": "docuconf.dev/v1alpha1", "kind": "ConfigContract", "metadata": {"name": "orders"},
+                 "vars": {
+                   "KEYS": {"type": "keySet", "description": "Webhook keys", "secret": true, "minKeys": 1,
+                            "maxKeys": 2, "keyMinLength": 8},
+                   "OLD_PORT": {"type": "int", "description": "Old listen port",
+                                "deprecated": {"message": "Use PORT instead", "replacedBy": "PORT"}}}}
+                """;
+        ContractFirst.Result r = ContractFirst.load(contract,
+                Map.of("KEYS", "old-key-1,new-key-2", "OLD_PORT", "7070"));
+        assertTrue(r.ok(), r.violations().toString());
+        dev.docuconf.KeySet keys = (dev.docuconf.KeySet) r.values().get("KEYS");
+        assertEquals(List.of("old-key-1", "new-key-2"), keys.keys());
+        assertEquals(List.of("OLD_PORT is deprecated: Use PORT instead; use PORT"), r.warnings());
+
+        r = ContractFirst.load(contract, Map.of("KEYS", "old-key-1,"));
+        assertEquals(List.of("[out_of_range] KEYS: key 1 is empty (a stray separator?)"),
+                r.violations().stream().map(Object::toString).toList());
+    }
+
+    @Test
+    void aDeprecationMessageIsNotBlankAndARequiredInputIsNotDeprecated() {
+        String contract = """
+                {"apiVersion": "docuconf.dev/v1alpha1", "kind": "ConfigContract", "metadata": {"name": "orders"},
+                 "vars": {"OLD_PORT": {"type": "int", "description": "Old listen port", "required": true,
+                                       "deprecated": {"message": "  "}}}}
+                """;
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> ContractFirst.load(contract, Map.of()));
+        assertTrue(e.getMessage().contains("OLD_PORT: the deprecation message must not be blank"), e.getMessage());
+        assertTrue(e.getMessage().contains("OLD_PORT: a required input cannot be deprecated"), e.getMessage());
+        String tooLong = contract.replace("\"  \"", "\"" + "x".repeat(501) + "\"").replace("\"required\": true,", "");
+        e = assertThrows(IllegalArgumentException.class, () -> ContractFirst.load(tooLong, Map.of()));
+        assertTrue(e.getMessage().contains("the most is 500"), e.getMessage());
+    }
+
+    @Test
     void loadsTypedValuesAndFiles() throws Exception {
         Files.createDirectories(tmp.resolve("etc/orders/rules"));
         Files.writeString(tmp.resolve("etc/orders/rules/rules.json"), "{\"routes\":[\"a\"]}");

@@ -10,6 +10,8 @@ import dev.docuconf.EnumCase;
 import dev.docuconf.EnumValues;
 import dev.docuconf.Json;
 import dev.docuconf.KeyAlgorithm;
+import dev.docuconf.KeySet;
+import dev.docuconf.KeySetLimits;
 import dev.docuconf.Keystore;
 import dev.docuconf.KeystoreFile;
 import dev.docuconf.MaxLength;
@@ -20,6 +22,7 @@ import dev.docuconf.TextFile;
 import dev.docuconf.TlsFile;
 import dev.docuconf.TlsKeyPair;
 import dev.docuconf.UrlSchemes;
+import org.springframework.boot.context.properties.DeprecatedConfigurationProperty;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -58,6 +61,8 @@ import org.springframework.validation.annotation.Validated;
  * @param geo GeoIP database
  * @param alertEmail Where security alerts go
  * @param mode Checkout mode
+ * @param webhookKeys Keys that verify payment webhooks
+ * @param legacyPort Port the shop used to listen on
  */
 @Docuconf(service = "shop")
 @ConfigOverlay(value = "/etc/shop/overlay/shop.yaml", description = "Platform overrides, layered over application.yml")
@@ -83,7 +88,19 @@ public record ShopProperties(
         @CaBundleFile(value = "/etc/shop/ca/bundle.pem", pathEnv = "SHOP_CA_FILE") CaBundle trusted,
         @BinaryFile("/data/geo/db.mmdb") Path geo,
         @Secret @Email String alertEmail,
-        @EnumValues(EnumCase.LOWER) @DefaultValue("FAST") Mode mode) {
+        @EnumValues(EnumCase.LOWER) @DefaultValue("FAST") Mode mode,
+        @KeySetLimits(keyMinLength = 8, keyMaxLength = 64) KeySet webhookKeys,
+        Integer legacyPort) {
+
+    /**
+     * The old port.
+     *
+     * @return the port
+     */
+    @DeprecatedConfigurationProperty(reason = "Use SHOP_PORT instead")
+    public Integer legacyPort() {
+        return legacyPort;
+    }
 
     @Override
     public String toString() {

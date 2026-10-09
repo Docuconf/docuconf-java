@@ -123,9 +123,10 @@ class FileCheckerTest {
                 new X509Certificate[] {ec.certificate()}, null);
         assertEquals(List.of("key_mismatch"), codes(check(tls(false), dir2)));
 
+        // SPEC §11.2 item 5: a tls.key that holds no PEM key at all is file_malformed.
         Path dir3 = TestCerts.writeTls(tmp.resolve("tls3"), "not a key\n",
                 new X509Certificate[] {ec.certificate()}, null);
-        assertEquals(List.of("key_mismatch"), codes(check(tls(false), dir3)));
+        assertEquals(List.of("file_malformed"), codes(check(tls(false), dir3)));
     }
 
     @Test

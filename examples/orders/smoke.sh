@@ -61,7 +61,7 @@ ORDERS_PORT=$port ORDERS_DATABASEURL="postgres://orders:$secret@localhost:5432/o
 status=$?
 set -e
 [ "$status" -eq 1 ] || { cat "$log"; echo "FAIL: exit status $status, not 1"; exit 1; }
-grep -qx '    \[out_of_range\] WEBHOOK_KEYS: item 1 is 0 characters, below itemMinLength 32' "$log" ||
+grep -qx '    \[out_of_range\] WEBHOOK_KEYS: key 1 is empty (a stray separator?)' "$log" ||
   { cat "$log"; echo "FAIL: no out_of_range for the empty key"; exit 1; }
 if grep -q webhook-key "$log"; then echo "FAIL: the output shows a key"; exit 1; fi
 grep '^    \[' "$log"

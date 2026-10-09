@@ -18,6 +18,8 @@ public enum VarType {
     ENUM("enum"),
     /** A list of strings or integers. */
     LIST("list"),
+    /** A set of secret keys that are all valid at once, for rotation without an outage (SPEC §4.3). */
+    KEY_SET("keySet"),
     /** A JSON document. */
     JSON("json");
 

@@ -25,6 +25,18 @@
       <artifactId>bcpkix-jdk18on</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Contract-first mode reads YAML and TOML files with whichever Jackson module the app has (found at run
+         time, so core keeps no dependency). The conformance suite needs one. -->
+    <dependency>
+      <groupId>tools.jackson.dataformat</groupId>
+      <artifactId>jackson-dataformat-yaml</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>tools.jackson.dataformat</groupId>
+      <artifactId>jackson-dataformat-toml</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

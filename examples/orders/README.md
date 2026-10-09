@@ -16,9 +16,9 @@ redacted; `POST /webhooks/payments` accepts a webhook signed with any key in the
 | `ORDERS_LOGLEVEL` | enum | `debug`, `info`, `warn`, `error` (the app also takes `WARN` and so on); default `info` |
 | `ORDERS_DATABASEURL` | url | secret, required, scheme `postgres`, at most 2048 characters |
 | `ORDERS_ALLOWEDORIGINS` | list of strings, comma-separated | at least 1 item; default `http://localhost:3000` |
-| `ORDERS_REQUESTTIMEOUT` | duration (`PT30S` or `30s`) | 1s to 5m, default 30s |
+| `ORDERS_REQUESTTIMEOUT` | duration, ISO 8601 (`PT30S`) | 1s to 5m, default 30s |
 | `ORDERS_WORKERCOUNT` | int | 1 to 64, default 4 |
-| `WEBHOOK_KEYS` | list of strings, comma-separated | secret, optional; 1 to 2 keys of 32 to 256 characters each |
+| `WEBHOOK_KEYS` | key set, comma-separated | always secret, optional; 1 to 2 keys of 32 to 256 characters each |
 
 The names are the ones Spring's relaxed binding reads for `orders.port`, `orders.log-level`, `webhook.keys` and so
 on.
@@ -59,10 +59,10 @@ In Kubernetes the same lines go to `/dev/termination-log`, so `kubectl describe 
 
 ## Rotate a key
 
-`WEBHOOK_KEYS` is a key set: `POST /webhooks/payments` accepts a body whose `X-Signature` header is the hex
-HMAC-SHA256 of the body under any key in the list
-([`Webhooks`](src/main/java/dev/docuconf/examples/orders/Webhooks.java)). It is one comma-separated value, so one
-Kubernetes Secret key holds it:
+`WEBHOOK_KEYS` is a key set, a `KeySet` property: `POST /webhooks/payments` accepts a body whose `X-Signature` header
+is the hex HMAC-SHA256 of the body under any key in the set
+([`Webhooks`](src/main/java/dev/docuconf/examples/orders/Webhooks.java) checks it with `KeySet.anyMatch`, which tries
+every key). It is one comma-separated value, so one Kubernetes Secret key holds it:
 
 ```yaml
 WEBHOOK_KEYS: # a key set: one Secret key holding "old,new" while rotating
@@ -82,7 +82,7 @@ service at startup instead of locking out the sender:
 ```text
 docuconf: 1 configuration problem:
 
-    [out_of_range] WEBHOOK_KEYS: item 1 is 0 characters, below itemMinLength 32
+    [out_of_range] WEBHOOK_KEYS: key 1 is empty (a stray separator?)
 ```
 
 [`WebhooksTest`](src/test/java/dev/docuconf/examples/orders/WebhooksTest.java) walks through a rotation, and
@@ -115,8 +115,8 @@ docuconf docs contract.cue --format model -o docs.json
 ```
 
 CI runs the same commands with `--check` and fails when a file is out of date. `ORDERS_WORKERCOUNT` shows where the
-text comes from: the first sentence of its Javadoc is the description, and the rest its details. `WEBHOOK_KEYS`'s
-details carry its rotation steps as a numbered list.
+text comes from: the first sentence of its Javadoc is the description, and the rest its details. `WEBHOOK_KEYS` is a
+key set, so the generated docs print its rotation steps themselves.
 
 ## Deploy
 

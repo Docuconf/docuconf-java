@@ -58,6 +58,17 @@ public class DocuconfAutoConfiguration {
     }
 
     /**
+     * Binds {@link dev.docuconf.KeySet} properties from one variable, without trimming the keys.
+     *
+     * @return the converter
+     */
+    @Bean
+    @ConfigurationPropertiesBinding
+    public static DocuconfKeySetConverter docuconfKeySetConverter() {
+        return new DocuconfKeySetConverter();
+    }
+
+    /**
      * Reloads file inputs declared with {@code reload = WATCH}.
      *
      * @param checker the startup checker, registered by {@link DocuconfStartupCheck}

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import dev.docuconf.KeySet;
 import dev.docuconf.contract.GoDuration;
 import dev.docuconf.contract.Json;
 import java.io.IOException;
@@ -13,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,12 +34,20 @@ import org.junit.jupiter.api.io.TempDir;
  *
  * <p>{@code cases.json} is found through {@code DOCUCONF_CONFORMANCE}, else {@code docuconf-go/conformance/cases.json}
  * in this directory or a parent (a sibling checkout of docuconf-go). When it is missing the suite is skipped,
- * unless {@code DOCUCONF_REQUIRE_CONFORMANCE=1}.
+ * unless {@code DOCUCONF_REQUIRE_CONFORMANCE=1}, which also fails the run when any case is skipped.
+ *
+ * <p>Each case runs in a new, empty directory: its files are written under it at their paths, and it is the
+ * {@code DOCUCONF_FILE_ROOT} of the case's environment, which is the whole environment the SDK sees.
  */
 class ConformanceTest {
 
-    /** Capability tags this SDK lacks. Java holds every 64-bit integer and validates JSON Schema. */
-    static final Set<String> UNSUPPORTED = Set.of();
+    /**
+     * The capability tags this SDK supports (SPEC §12): an allow-list, so a case with a tag the runner does not
+     * know is skipped, never run. Java holds every 64-bit integer and validates JSON Schema, and supports every
+     * transitional tag.
+     */
+    static final Set<String> SUPPORTED = Set.of("int64", "json-schema", "key-set", "deprecated", "strict-parsing",
+            "files", "profiles", "overlays");
 
     @TempDir
     Path tmp;
@@ -80,7 +90,7 @@ class ConformanceTest {
             tests.add(DynamicTest.dynamicTest(id, () -> {
                 List<String> missing = new ArrayList<>();
                 for (Object tag : (List<Object>) c.getOrDefault("requires", List.of())) {
-                    if (UNSUPPORTED.contains(tag)) {
+                    if (!SUPPORTED.contains(tag)) {
                         missing.add((String) tag);
                     }
                 }
@@ -103,6 +113,9 @@ class ConformanceTest {
             for (String id : failed) {
                 System.out.println("conformance: FAILED " + id);
             }
+            if ("1".equals(System.getenv("DOCUCONF_REQUIRE_CONFORMANCE"))) {
+                assertEquals(0, skipped.get(), "conformance cases were skipped; every case must run");
+            }
         }));
         return tests.stream();
     }
@@ -113,14 +126,29 @@ class ConformanceTest {
         Map<String, Object> contract = (Map<String, Object>) c.get("contract");
         Map<String, String> env = new LinkedHashMap<>();
         ((Map<String, Object>) c.get("env")).forEach((k, v) -> env.put(k, (String) v));
+        // A new, empty directory per case, holding the case's files at their paths: the file root.
+        Path root = Files.createTempDirectory(tmp, "case");
+        Map<String, Object> files = (Map<String, Object>) c.getOrDefault("files", Map.of());
+        for (Map.Entry<String, Object> f : files.entrySet()) {
+            Path target = root.resolve(f.getKey().replaceFirst("^/+", ""));
+            Files.createDirectories(target.getParent());
+            Map<String, Object> content = (Map<String, Object>) f.getValue();
+            if (content.containsKey("base64")) {
+                Files.write(target, Base64.getDecoder().decode((String) content.get("base64")));
+            } else {
+                Files.writeString(target, (String) content.get("text"), StandardCharsets.UTF_8);
+            }
+        }
+        env.put(FileChecker.FILE_ROOT_ENV, root.toString());
         ContractFirst.Result r = ContractFirst.load(Json.write(contract), env);
 
         if (c.containsKey("expect")) {
             assertTrue(r.ok(), id + ": expected success, got " + r.violations());
             Map<String, Object> expect = (Map<String, Object>) c.get("expect");
             for (Map.Entry<String, Object> e : expect.entrySet()) {
-                assertTrue(r.values().containsKey(e.getKey()), id + ": no value for " + e.getKey());
-                Object actual = toJson(r.values().get(e.getKey()));
+                boolean isFile = r.files().containsKey(e.getKey());
+                assertTrue(isFile || r.values().containsKey(e.getKey()), id + ": no value for " + e.getKey());
+                Object actual = isFile ? fileJson(r.files().get(e.getKey())) : toJson(r.values().get(e.getKey()));
                 assertTrue(same(e.getValue(), actual), id + ": " + e.getKey() + " is " + Json.write(actual)
                         + ", expected " + Json.write(e.getValue()));
             }
@@ -158,10 +186,22 @@ class ConformanceTest {
         }
     }
 
-    /** A typed value as JSON data: durations in canonical Go form. */
+    /** A file input as JSON data: a config file's data, a text file's text, any other input {@code true}. */
+    private static Object fileJson(Object value) {
+        if (value == null || value instanceof String || value instanceof Map || value instanceof List
+                || value instanceof Number || value instanceof Boolean) {
+            return value;
+        }
+        return true;
+    }
+
+    /** A typed value as JSON data: durations in canonical Go form, a key set's keys in order. */
     private static Object toJson(Object value) {
         if (value instanceof Duration d) {
             return GoDuration.format(d);
+        }
+        if (value instanceof KeySet k) {
+            return k.keys();
         }
         if (value instanceof List<?> l) {
             return l.stream().map(ConformanceTest::toJson).toList();

@@ -1,0 +1,2 @@
+# The export fixture's base file: a @Json property's default is its JSON, as the platform would set it.
+rate-limits: '{"perMinute": 60}'

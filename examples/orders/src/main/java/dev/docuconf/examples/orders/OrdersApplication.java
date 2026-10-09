@@ -55,13 +55,13 @@ public class OrdersApplication {
         out.put("allowedOrigins", config.allowedOrigins());
         out.put("requestTimeout", config.requestTimeout());
         out.put("workerCount", config.workerCount());
-        out.put("webhookKeys", "***"); // @Secret, set or not
+        out.put("webhookKeys", "***"); // a KeySet is always secret, set or not
         return out;
     }
 
     /**
-     * Payment webhooks, signed with any key in {@code WEBHOOK_KEYS} (see {@link WebhookProperties} for how to rotate
-     * it).
+     * Payment webhooks, signed with any key in {@code WEBHOOK_KEYS}. CONFIG.md, generated from the contract, says how
+     * to rotate a key.
      */
     @PostMapping("/webhooks/payments")
     ResponseEntity<Void> paymentWebhook(InputStream in,

@@ -204,13 +204,52 @@ public final class Re2 {
 
     /**
      * Anchors a whole-value pattern (Bean Validation {@code @Pattern}) for the contract, where patterns match
-     * anywhere: {@code ^(?:p)$}, with Java flags as an inline group.
+     * anywhere: {@code ^(?:p)$}, with Java flags as an inline group. A pattern that already starts with {@code ^}
+     * and ends with {@code $}, with no top-level {@code |}, matches the whole value either way and is kept as it
+     * is: {@code ^[a-z]+$} stays {@code ^[a-z]+$}.
      *
      * @param pattern the {@code @Pattern} regexp
      * @param flags inline flags such as {@code i}, or empty
      * @return the anchored pattern
      */
     public static String anchor(String pattern, String flags) {
+        if (flags.isEmpty() && anchoredAtBothEnds(pattern)) {
+            return pattern;
+        }
         return "^(?" + flags + ":" + pattern + ")$";
+    }
+
+    /** Whether a pattern is {@code ^...$} with no alternation outside groups. */
+    private static boolean anchoredAtBothEnds(String p) {
+        if (p.length() < 2 || p.charAt(0) != '^' || p.charAt(p.length() - 1) != '$') {
+            return false;
+        }
+        int depth = 0;
+        boolean inClass = false;
+        for (int i = 1; i < p.length() - 1; i++) {
+            char c = p.charAt(i);
+            if (c == '\\') {
+                i++;
+                if (i >= p.length() - 1) {
+                    return false; // the final $ is escaped
+                }
+                continue;
+            }
+            if (inClass) {
+                inClass = c != ']';
+            } else if (c == '[') {
+                inClass = true;
+                if (i + 1 < p.length() && p.charAt(i + 1) == ']') {
+                    i++;
+                }
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (c == '|' && depth == 0) {
+                return false;
+            }
+        }
+        return depth == 0 && !inClass;
     }
 }

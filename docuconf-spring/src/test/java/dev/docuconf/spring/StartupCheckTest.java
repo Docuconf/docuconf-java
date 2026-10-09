@@ -79,6 +79,25 @@ class StartupCheckTest {
     }
 
     @Test
+    void valuesBindAsSpecSectionFiveReadsThem() throws Exception {
+        shop.env.put("SHOP_PORT", "+010");
+        shop.env.put("SHOP_SHARDS", "007,+8");
+        shop.env.put("SHOP_TIMEOUT", "PT1,5S");
+        shop.env.put("SHOP_WEBHOOKKEYS", "old-key-0123, new-key-0123");
+        try (ConfigurableApplicationContext ctx = shop.run()) {
+            ShopProperties p = ctx.getBean(ShopProperties.class);
+            assertEquals(10, p.port(), "010 is decimal, never octal");
+            assertEquals(List.of(7, 8), p.shards());
+            assertEquals(Duration.ofMillis(1500), p.timeout());
+            assertEquals(List.of("old-key-0123", " new-key-0123"), p.webhookKeys().keys(), "keys are never trimmed");
+            assertTrue(p.webhookKeys().contains(" new-key-0123"));
+            assertFalse(p.webhookKeys().contains("new-key-0123"));
+            assertFalse(p.toString().contains("key-0123"), p.toString());
+            assertFalse(p.webhookKeys().toString().contains("key-0123"));
+        }
+    }
+
+    @Test
     void emptyMeansUnsetExceptForStrings() {
         shop.env.put("SHOP_PORT", "");
         shop.env.put("SHOP_TIMEOUT", "");

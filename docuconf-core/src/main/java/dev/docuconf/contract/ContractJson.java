@@ -140,6 +140,10 @@ public final class ContractJson {
         put(m, "itemMax", v.itemMax);
         put(m, "itemMinLength", v.itemMinLength);
         put(m, "itemMaxLength", v.itemMaxLength);
+        put(m, "minKeys", v.minKeys);
+        put(m, "maxKeys", v.maxKeys);
+        put(m, "keyMinLength", v.keyMinLength);
+        put(m, "keyMaxLength", v.keyMaxLength);
         put(m, "schema", v.schema);
         put(m, "default", v.defaultValue);
         return m;
@@ -296,7 +300,8 @@ public final class ContractJson {
             v.values = (List<String>) vm.get("values");
             v.items = (String) vm.get("items");
             v.separator = (String) vm.get("separator");
-            if (v.type == VarType.LIST && "csv".equals(v.encoding == null ? "csv" : v.encoding) && v.separator == null) {
+            boolean listLike = v.type == VarType.LIST || v.type == VarType.KEY_SET;
+            if (listLike && "csv".equals(v.encoding == null ? "csv" : v.encoding) && v.separator == null) {
                 v.separator = ",";
             }
             v.minItems = integer(vm.get("minItems"));
@@ -305,6 +310,10 @@ public final class ContractJson {
             v.itemMax = longValue(vm.get("itemMax"));
             v.itemMinLength = integer(vm.get("itemMinLength"));
             v.itemMaxLength = integer(vm.get("itemMaxLength"));
+            v.minKeys = integer(vm.get("minKeys"));
+            v.maxKeys = integer(vm.get("maxKeys"));
+            v.keyMinLength = integer(vm.get("keyMinLength"));
+            v.keyMaxLength = integer(vm.get("keyMaxLength"));
             v.schema = (Map<String, Object>) vm.get("schema");
             v.defaultValue = vm.get("default");
             c.vars.put(name, v);
