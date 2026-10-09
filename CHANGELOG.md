@@ -4,6 +4,36 @@ All notable changes to docuconf-java are documented here. Entries from the first
 [release-please](https://github.com/googleapis/release-please) from Conventional Commit messages; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.2.0](https://github.com/Docuconf/docuconf-java/compare/v0.1.0-SNAPSHOT...v0.2.0) (2026-10-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* environment variables are parsed strictly. A duration in the environment must be ISO 8601 (PT30S; Spring's 30s is invalid_type), bools accept only true/false, ints only decimal digits (0x10, #10 are invalid_type; 010 is now 10, not octal 8), and string list items with surrounding spaces, or empty ones, are invalid_type instead of being trimmed or dropped by Spring. VarChecker no longer rejects negative durations. A tls.crt or tls.key holding no PEM block reports file_malformed instead of certificate_invalid or key_mismatch. A keystore whose password variable is unset is opened with an empty password instead of none, so its integrity check now runs. The example's WEBHOOK_KEYS changes from a list to a keySet in the contract.
+
+### Features
+
+* beta suite (keySet, deprecated rules, strict parsing, files, profiles, overlays) ([3cf2597](https://github.com/Docuconf/docuconf-java/commit/3cf2597aab0d05e03161a5009d4cf262ee52ce90))
+* beta suite (keySet, deprecated rules, strict parsing, files, profiles, overlays) ([2cc41a1](https://github.com/Docuconf/docuconf-java/commit/2cc41a1d094550c728353623068582440aa2463b))
+* devX fixes (stale-contract detection, Maven plugin, BOM, tester, positioned diagnostics) ([44bff6e](https://github.com/Docuconf/docuconf-java/commit/44bff6e0d6db911fd8eba4bcd10062652ddeb39a))
+* **examples:** dual-key webhook key set with rotation ([d5ac9de](https://github.com/Docuconf/docuconf-java/commit/d5ac9de6f9fc8fbe1e84d7cc17b54afc62018957))
+* **examples:** dual-key webhook key set with rotation ([997a00d](https://github.com/Docuconf/docuconf-java/commit/997a00d3d36c4fde67c80daa2e73aa742f6657ff))
+* export description and details from doc comments ([986991b](https://github.com/Docuconf/docuconf-java/commit/986991bd3431c86a668bc71a4f53d4139450a050))
+* export description and details from doc comments ([0e4b209](https://github.com/Docuconf/docuconf-java/commit/0e4b209d693527310be6ed39ba98665a2c13a33f))
+* maxLength on url/json and item length limits on string lists ([aca201b](https://github.com/Docuconf/docuconf-java/commit/aca201b373fd2ddddea775bdd6a0490091d9fde9))
+* maxLength on url/json and item length limits on string lists ([9e4f692](https://github.com/Docuconf/docuconf-java/commit/9e4f692276dfecbafc05f2f75142e8d5ab138a9a))
+
+
+### Bug Fixes
+
+* contract check ignores metadata.generator.version ([aad71f2](https://github.com/Docuconf/docuconf-java/commit/aad71f21cf78985d7265a058b8c19a7311a14402))
+
+
+### Documentation
+
+* **examples:** length limits and generated CONFIG docs ([afc8113](https://github.com/Docuconf/docuconf-java/commit/afc81139c5c9c327048f2a1c27f5acdb242e215d))
+* link docuconf.dev ([11edd9d](https://github.com/Docuconf/docuconf-java/commit/11edd9dfd8e6246bdf4faa484768c78a0a353a87))
+
 ## 0.1.0-SNAPSHOT (unreleased)
 
 Development of the first version (not yet published): typed configuration contracts for Spring Boot
