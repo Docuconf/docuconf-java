@@ -186,12 +186,14 @@ public final class FileChecker {
     private static Keystore keystore(FileSpec f, Path path, Function<String, String> env, List<Violation> out)
             throws IOException {
         String type = "jks".equalsIgnoreCase(f.format) ? "JKS" : "PKCS12";
+        // SPEC §11.2 item 7: an unset password variable is an empty password. A null password would make the JDK
+        // skip the integrity check and open a keystore whatever its password.
         String password = f.passwordVar == null ? null : env.apply(f.passwordVar);
         Keystore ks = new Keystore(path, type);
         try {
             KeyStore store = KeyStore.getInstance(type);
             store.load(new ByteArrayInputStream(Files.readAllBytes(path)),
-                    password == null ? null : password.toCharArray());
+                    password == null ? new char[0] : password.toCharArray());
         } catch (IOException | GeneralSecurityException | IllegalArgumentException e) {
             String with = f.passwordVar == null ? "without a password" : "with the password in " + f.passwordVar;
             out.add(new Violation(Code.KEYSTORE_UNREADABLE, f.name,
@@ -225,17 +227,24 @@ public final class FileChecker {
             return null;
         }
         if (chain.isEmpty()) {
-            out.add(new Violation(Code.CERTIFICATE_INVALID, n, certPath + " holds no PEM certificate"));
+            // SPEC §11.2 item 5: a tls.crt with no PEM certificate at all is file_malformed.
+            out.add(new Violation(Code.FILE_MALFORMED, n, certPath + " holds no PEM certificate"));
             return null;
         }
         X509Certificate leaf = chain.get(0);
 
         PrivateKey key = null;
-        try {
-            key = Pem.privateKey(Files.readString(keyPath, StandardCharsets.ISO_8859_1));
-        } catch (GeneralSecurityException e) {
-            out.add(new Violation(Code.KEY_MISMATCH, n,
-                    keyPath + " is not a supported PEM private key (" + e.getMessage() + ")"));
+        String keyText = Files.readString(keyPath, StandardCharsets.ISO_8859_1);
+        if (!keyText.contains("-----BEGIN ")) {
+            // SPEC §11.2 item 5: a tls.key with no PEM block at all is file_malformed.
+            out.add(new Violation(Code.FILE_MALFORMED, n, keyPath + " holds no PEM private key"));
+        } else {
+            try {
+                key = Pem.privateKey(keyText);
+            } catch (GeneralSecurityException e) {
+                out.add(new Violation(Code.KEY_MISMATCH, n,
+                        keyPath + " is not a supported PEM private key (" + e.getMessage() + ")"));
+            }
         }
         if (key != null && !matches(key, leaf.getPublicKey())) {
             out.add(new Violation(Code.KEY_MISMATCH, n, keyPath + " is not the private key of the certificate"));

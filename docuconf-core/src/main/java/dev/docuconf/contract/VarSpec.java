@@ -49,7 +49,7 @@ public final class VarSpec {
     public Object min;
     /** Int, float or duration upper bound. */
     public Object max;
-    /** Duration or list wire encoding. */
+    /** Duration, list or key set wire encoding. */
     public String encoding;
     /** URL: allowed schemes. */
     public List<String> schemes;
@@ -57,7 +57,7 @@ public final class VarSpec {
     public List<String> values;
     /** List: item type, {@code string} or {@code int}. */
     public String items;
-    /** List with csv encoding: the separator. */
+    /** List or key set with csv encoding: the separator. */
     public String separator;
     /** List: least number of items. */
     public Integer minItems;
@@ -71,11 +71,37 @@ public final class VarSpec {
     public Integer itemMinLength;
     /** String list: greatest length of each item, in characters (Unicode code points). */
     public Integer itemMaxLength;
+    /** Key set: least number of keys (the contract default is 1). */
+    public Integer minKeys;
+    /** Key set: greatest number of keys (the contract default is 2). */
+    public Integer maxKeys;
+    /** Key set: least length of each key, in characters (Unicode code points). */
+    public Integer keyMinLength;
+    /** Key set: greatest length of each key, in characters (Unicode code points). */
+    public Integer keyMaxLength;
     /** JSON: the JSON Schema of the value. */
     public Map<String, Object> schema;
 
     /** Creates an empty spec. */
     public VarSpec() {
+    }
+
+    /**
+     * The least number of keys of a key set: {@link #minKeys}, else the contract default 1.
+     *
+     * @return the bound
+     */
+    public int minKeysOrDefault() {
+        return minKeys == null ? 1 : minKeys;
+    }
+
+    /**
+     * The greatest number of keys of a key set: {@link #maxKeys}, else the contract default 2.
+     *
+     * @return the bound
+     */
+    public int maxKeysOrDefault() {
+        return maxKeys == null ? 2 : maxKeys;
     }
 
     /**

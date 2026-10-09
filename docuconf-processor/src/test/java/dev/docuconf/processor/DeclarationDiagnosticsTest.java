@@ -31,7 +31,88 @@ class DeclarationDiagnosticsTest {
             import org.springframework.boot.context.properties.ConfigurationProperties;
             import org.springframework.boot.context.properties.bind.DefaultValue;
             import org.springframework.boot.convert.Delimiter;
+            import org.springframework.boot.context.properties.DeprecatedConfigurationProperty;
             """;
+
+    @Test
+    void aKeySetExportsAsAlwaysSecretKeySet() throws Exception {
+        String source = IMPORTS + """
+                @Docuconf(service = "svc")
+                @ConfigurationProperties("svc")
+                public record SvcProperties(
+                        @Description("Keys that verify webhook signatures")
+                        @KeySetLimits(keyMinLength = 32, keyMaxLength = 256) KeySet webhookKeys,
+                        @Description("Keys that sign session cookies") @Delimiter(";") KeySet cookieKeys) {
+                }
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.SvcProperties", source));
+        assertTrue(c.success, c.allErrors());
+        Contract contract = ContractJson.read(c.contractJson()).contract();
+        var keys = contract.vars.get("SVC_WEBHOOKKEYS");
+        assertEquals(dev.docuconf.contract.VarType.KEY_SET, keys.type);
+        assertTrue(keys.secret, "a key set is always secret");
+        assertEquals(1, keys.minKeys);
+        assertEquals(2, keys.maxKeys);
+        assertEquals(32, keys.keyMinLength);
+        assertEquals(256, keys.keyMaxLength);
+        assertEquals("csv", keys.encoding);
+        assertEquals(";", contract.vars.get("SVC_COOKIEKEYS").separator);
+        // A record holding a KeySet needs no toString() override: KeySet prints [redacted] itself.
+        assertTrue(c.errors.isEmpty(), c.allErrors());
+    }
+
+    @Test
+    void keySetLimitsAreChecked() throws Exception {
+        String source = IMPORTS + """
+                @Docuconf(service = "svc")
+                @ConfigurationProperties("svc")
+                public record SvcProperties(
+                        @Description("Keys that verify webhook signatures")
+                        @KeySetLimits(minKeys = 3, maxKeys = 2) KeySet webhookKeys,
+                        @Description("Keys that sign session cookies") @Size(max = 2) KeySet cookieKeys,
+                        @Description("Listen port for the server") @KeySetLimits @DefaultValue("8080") int port) {
+                }
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.SvcProperties", source));
+        assertFalse(c.success);
+        String e = c.allErrors();
+        assertTrue(e.contains("SVC_WEBHOOKKEYS: maxKeys (2) is less than minKeys (3)"), e);
+        assertTrue(e.contains("SVC_COOKIEKEYS: a KeySet is bounded with @KeySetLimits"), e);
+        assertTrue(e.contains("SVC_PORT: @KeySetLimits applies to KeySet, not int"), e);
+    }
+
+    @Test
+    void deprecationRulesAreCheckedAtDeclaration() throws Exception {
+        String source = IMPORTS + """
+                @Docuconf(service = "svc")
+                @ConfigurationProperties("svc")
+                public class SvcProperties {
+                    /** Port the service used to listen on. */
+                    private Integer oldPort;
+                    /** Hostname of the upstream service. */
+                    @NotNull private String upstream;
+                    /** Region the service runs in. */
+                    private String region;
+
+                    @Deprecated
+                    @DeprecatedConfigurationProperty(reason = "Use svc.port instead", replacement = "svc.port")
+                    public Integer getOldPort() { return oldPort; }
+                    public void setOldPort(Integer v) { oldPort = v; }
+                    @DeprecatedConfigurationProperty(reason = "Set by the platform now")
+                    public String getUpstream() { return upstream; }
+                    public void setUpstream(String v) { upstream = v; }
+                    @DeprecatedConfigurationProperty(reason = " ")
+                    public String getRegion() { return region; }
+                    public void setRegion(String v) { region = v; }
+                }
+                """;
+        Compilation c = Compilation.compile(tmp, Map.of(), Map.of("demo.SvcProperties", source));
+        assertFalse(c.success);
+        String e = c.allErrors();
+        assertTrue(e.contains("SVC_UPSTREAM: a required input cannot be deprecated"), e);
+        assertTrue(e.contains("SVC_REGION: the deprecation message must not be blank"), e);
+        assertFalse(e.contains("SVC_OLDPORT"), e);
+    }
 
     @Test
     void everyDiagnosticHasAFileAndLine() throws Exception {
@@ -114,7 +195,7 @@ class DeclarationDiagnosticsTest {
         assertTrue(e.contains("SVC_BUDGET: @Size applies to String, a collection, a map or an array, not int"), e);
         assertTrue(e.contains("SVC_TIMEOUT: @Pattern applies to String, not Duration"), e);
         assertTrue(e.contains("SVC_REGION: @Min applies to numbers, not String"), e);
-        assertTrue(e.contains("SVC_OWNER: @Delimiter applies to a list, set or array, not String"), e);
+        assertTrue(e.contains("SVC_OWNER: @Delimiter applies to a list, set, array or KeySet, not String"), e);
         assertTrue(e.contains("SVC_DB: @Secret applies to a single value, not to the nested class Db"), e);
     }
 

@@ -24,7 +24,7 @@ public final class WireFormat {
     private static final BigDecimal MAX_DURATION_NANOS = BigDecimal.valueOf(Long.MAX_VALUE);
 
     private static final Pattern INTEGER = Pattern.compile("^[+-]?[0-9]+$");
-    private static final Pattern FLOAT = Pattern.compile("^[+-]?([0-9]+\\.?[0-9]*|\\.[0-9]+)([eE][+-]?[0-9]+)?$");
+    private static final Pattern FLOAT = Pattern.compile("^[+-]?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$");
     private static final Pattern GO_PART = Pattern.compile("([0-9]*)(?:\\.([0-9]*))?(ns|us|µs|μs|ms|s|m|h)");
     private static final String ISO_NUM = "([0-9]+(?:[.,][0-9]+)?)";
     private static final Pattern ISO8601 = Pattern.compile(

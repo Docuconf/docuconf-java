@@ -33,12 +33,14 @@ import java.util.function.Function;
  *
  * <p>Every wire encoding is parsed (SPEC §5): lists as {@code csv} with their separator, {@code json} or
  * {@code indexed} ({@code NAME__0}, {@code NAME__1}, ..., numbered from 0 with no gap); durations as {@code go}, {@code iso8601},
- * {@code seconds} or {@code timespan}. An unset variable takes the selected profile's default (SPEC §4.4), else
- * its own default; the environment overrides both. Constraints are checked by {@link VarChecker}, the same code
+ * {@code seconds} or {@code timespan}, each exactly as SPEC §5 writes it. Layers apply in the order of SPEC §4.7: the
+ * variable's default, the selected profile's default (SPEC §4.4), a config-file overlay, then the environment. File
+ * inputs (SPEC §4.6) and overlays are read under {@code DOCUCONF_FILE_ROOT}. Constraints are checked by {@link VarChecker}, the same code
  * that checks declared defaults at compile time and Spring-bound values at startup.
  *
  * <p>Typed values: {@code String} for string, url and enum; {@code Long} for int; {@code BigDecimal} for float;
- * {@code Boolean}; {@link Duration}; a {@code List} of {@code String} or {@code Long}; for json, the parsed value
+ * {@code Boolean}; {@link Duration}; a {@code List} of {@code String} or {@code Long}; a
+ * {@link dev.docuconf.KeySet} for a key set; for json, the parsed value
  * ({@code Map}, {@code List}, {@code String}, {@code Long}, {@code BigDecimal}, {@code Boolean} or {@code null}).
  * An optional variable that is not set and has no default is {@code null}.
  *
@@ -225,14 +227,15 @@ public final class ContractFirst {
         List<Violation> violations = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         Map<String, Object> profile = profileDefaults(contract, env);
+        Map<String, Overlays.Value> overlay = Overlays.load(contract, env::get, violations, warnings);
         for (VarSpec v : contract.vars.values()) {
-            values.put(v.name, var(v, env, profile, violations, warnings));
+            values.put(v.name, var(v, env, profile, overlay.get(v.name), violations, warnings));
         }
         warnings.addAll(typoHints(contract, env));
         Map<String, Object> files = new LinkedHashMap<>();
         Instant now = Instant.now();
         for (FileSpec f : contract.files.values()) {
-            files.put(f.name, file(f, env::get, now, violations));
+            files.put(f.name, file(f, env::get, now, violations, warnings));
         }
         return new Result(Collections.unmodifiableMap(values), Collections.unmodifiableMap(files),
                 List.copyOf(violations), List.copyOf(warnings));
@@ -300,9 +303,9 @@ public final class ContractFirst {
         return defaults == null ? Map.of() : defaults;
     }
 
-    private static Object var(VarSpec v, Map<String, String> env, Map<String, Object> profile, List<Violation> out,
-            List<String> warnings) {
-        boolean indexed = v.type == VarType.LIST && "indexed".equals(v.encoding);
+    private static Object var(VarSpec v, Map<String, String> env, Map<String, Object> profile,
+            Overlays.Value overlay, List<Violation> out, List<String> warnings) {
+        boolean indexed = (v.type == VarType.LIST || v.type == VarType.KEY_SET) && "indexed".equals(v.encoding);
         String raw = null;
         Map<String, String> items = null;
         if (indexed) {
@@ -311,6 +314,14 @@ public final class ContractFirst {
             raw = env.get(v.name);
         }
         boolean present = indexed ? items != null : raw != null && (!raw.isEmpty() || v.type == VarType.STRING);
+        if (present && overlay != null) {
+            // SPEC §4.7: the environment wins; the platform rejects this before deploy.
+            warnings.add(v.name + " is set both in the environment and in overlay " + overlay.overlay()
+                    + "; the environment wins");
+        }
+        if (!present && overlay != null) {
+            return fromOverlay(v, overlay, out, warnings);
+        }
         if (!present) {
             if (profile.containsKey(v.name)) {
                 return fromContract(v, profile.get(v.name));
@@ -332,19 +343,42 @@ public final class ContractFirst {
             out.add(reference);
             return null;
         }
-        if (v.deprecated != null) {
-            warnings.add(v.name + " is deprecated: " + v.deprecated.message()
-                    + (v.deprecated.replacedBy() == null ? "" : "; use " + v.deprecated.replacedBy()));
-        }
+        deprecationWarning(v, warnings);
         String shown = v.secret || raw == null ? "" : " (got " + quote(raw) + ")";
         Object value;
         try {
-            value = parse(v, raw, items);
+            value = parse(v, raw, items == null ? null : inOrder(v.name, items));
         } catch (WireFormat.WireException e) {
             out.add(new Violation(e.code(), v.name, e.getMessage() + shown));
             return null;
         }
-        List<Violation> found = new ArrayList<>(VarChecker.check(v, value, raw));
+        return checked(v, value, raw, out);
+    }
+
+    /**
+     * SPEC §11.2: a deprecated input that is set loads as usual, with a warning naming it and its message, never
+     * its value.
+     */
+    private static void deprecationWarning(VarSpec v, List<String> warnings) {
+        if (v.deprecated != null) {
+            warnings.add(deprecationMessage(v.name, v.deprecated));
+        }
+    }
+
+    /**
+     * The warning for a deprecated input that is set: its name, its message and its replacement, never its value.
+     *
+     * @param input the variable or file input
+     * @param d its deprecation
+     * @return the warning
+     */
+    public static String deprecationMessage(String input, dev.docuconf.contract.Deprecation d) {
+        return input + " is deprecated: " + d.message() + (d.replacedBy() == null ? "" : "; use " + d.replacedBy());
+    }
+
+    /** Checks a parsed value against its constraints and schema; the value, or {@code null} after a violation. */
+    private static Object checked(VarSpec v, Object value, String wire, List<Violation> out) {
+        List<Violation> found = new ArrayList<>(VarChecker.check(v, value, wire));
         if (!found.isEmpty()) {
             out.addAll(found);
             return null;
@@ -361,15 +395,66 @@ public final class ContractFirst {
         return value;
     }
 
-    /** Parses a raw value into the form {@link VarChecker} takes, which is also the typed value. */
-    private static Object parse(VarSpec v, String raw, Map<String, String> indexedItems) {
+    /**
+     * A value from a config-file overlay (SPEC §4.7): its native value converted to the wire string it stands for,
+     * then parsed in the variable's own encoding and checked exactly like an env value.
+     */
+    private static Object fromOverlay(VarSpec v, Overlays.Value overlay, List<Violation> out,
+            List<String> warnings) {
+        String where = " in overlay " + overlay.overlay();
+        if (v.secret) {
+            out.add(new Violation(Code.INVALID_TYPE, v.name, "is a secret, so it cannot come from" + where
+                    + "; set it in the environment from a Secret"));
+            return null;
+        }
+        Object nativeValue = overlay.value();
+        deprecationWarning(v, warnings);
+        try {
+            if (v.type == VarType.JSON) {
+                String compact = Json.write(nativeValue);
+                return checked(v, Json.parse(compact), null, out);
+            }
+            if (v.type == VarType.LIST) {
+                if (!(nativeValue instanceof List<?> l)) {
+                    throw new WireFormat.WireException(Code.INVALID_TYPE, "is not a list" + where);
+                }
+                List<String> items = new ArrayList<>();
+                for (Object item : l) {
+                    items.add(Overlays.wire(item, where));
+                }
+                return checked(v, parse(v, null, items), null, out);
+            }
+            String raw = Overlays.wire(nativeValue, where);
+            if (raw.isEmpty() && v.type != VarType.STRING) {
+                return fromContract(v, v.defaultValue);
+            }
+            String shown = " (got " + quote(raw) + ")";
+            try {
+                return checked(v, parse(v, raw, null), raw, out);
+            } catch (WireFormat.WireException e) {
+                throw new WireFormat.WireException(e.code(), e.getMessage() + where + shown);
+            }
+        } catch (WireFormat.WireException e) {
+            out.add(new Violation(e.code(), v.name, e.getMessage()));
+            return null;
+        }
+    }
+
+    /**
+     * Parses a raw value into the form {@link VarChecker} takes, which is also the typed value.
+     *
+     * @param itemsInOrder for a list or key set, its items when they come one by one (the indexed encoding, or an
+     *     overlay's list); else {@code null}
+     */
+    private static Object parse(VarSpec v, String raw, List<String> itemsInOrder) {
         return switch (v.type) {
             case STRING, URL, ENUM -> raw;
             case INT -> WireFormat.parseInt(raw);
             case FLOAT -> WireFormat.parseFloat(raw);
             case BOOL -> WireFormat.parseBool(raw);
             case DURATION -> WireFormat.parseDuration(raw, v.encoding);
-            case LIST -> list(v, raw, indexedItems);
+            case LIST -> list(v, raw, itemsInOrder);
+            case KEY_SET -> dev.docuconf.KeySet.of(keys(v, raw, itemsInOrder));
             case JSON -> {
                 try {
                     yield Json.parse(raw);
@@ -380,12 +465,27 @@ public final class ContractFirst {
         };
     }
 
-    private static List<Object> list(VarSpec v, String raw, Map<String, String> indexedItems) {
+    /** A key set's keys, split like a list of strings (SPEC §5): never trimmed, so an empty key stays. */
+    private static List<String> keys(VarSpec v, String raw, List<String> itemsInOrder) {
+        if (itemsInOrder != null) {
+            return itemsInOrder;
+        }
+        if ("json".equals(v.encoding)) {
+            List<String> out = new ArrayList<>();
+            for (Object o : WireFormat.parseJsonList(raw, "string")) {
+                out.add((String) o);
+            }
+            return out;
+        }
+        return WireFormat.splitCsv(raw, v.separator);
+    }
+
+    private static List<Object> list(VarSpec v, String raw, List<String> itemsInOrder) {
         String encoding = v.encoding == null ? "csv" : v.encoding;
-        if (encoding.equals("json")) {
+        if (itemsInOrder == null && encoding.equals("json")) {
             return WireFormat.parseJsonList(raw, v.items);
         }
-        List<String> items = encoding.equals("indexed") ? inOrder(v.name, indexedItems) : WireFormat.splitCsv(raw, v.separator);
+        List<String> items = itemsInOrder != null ? itemsInOrder : WireFormat.splitCsv(raw, v.separator);
         List<Object> out = new ArrayList<>();
         for (int i = 0; i < items.size(); i++) {
             if (!"int".equals(v.items)) {
@@ -455,37 +555,50 @@ public final class ContractFirst {
         };
     }
 
-    private static Object file(FileSpec f, Function<String, String> env, Instant now, List<Violation> out) {
+    private static Object file(FileSpec f, Function<String, String> env, Instant now, List<Violation> out,
+            List<String> warnings) {
         Path path = FileChecker.resolve(f, env);
         FileChecker.Outcome o = FileChecker.check(f, path, now, env);
         out.addAll(o.violations());
+        if (o.present() && f.deprecated != null) {
+            warnings.add(deprecationMessage(f.name, f.deprecated));
+        }
         if (!o.violations().isEmpty() || o.value() == null) {
             return null;
         }
-        if (f.type == FileType.CONFIG && isJson(f, path)) {
-            Object doc;
-            try {
-                doc = Json.parse(new String((byte[]) o.value(), StandardCharsets.UTF_8));
-            } catch (IllegalArgumentException e) {
-                out.add(new Violation(Code.FILE_MALFORMED, f.name, path + " is not valid JSON: " + e.getMessage()));
+        if (f.type != FileType.CONFIG) {
+            return o.value();
+        }
+        Object doc;
+        try {
+            doc = Documents.parse(format(f, path), (byte[]) o.value());
+        } catch (Documents.Malformed e) {
+            out.add(new Violation(Code.FILE_MALFORMED, f.name, path + " " + e.getMessage()));
+            return null;
+        }
+        if (doc == null) {
+            out.add(new Violation(Code.FILE_MALFORMED, f.name, path + " is empty"));
+            return null;
+        }
+        if (f.schema != null) {
+            List<String> problems = JsonSchema.validate(f.schema, doc, f.secret);
+            for (String p : problems) {
+                out.add(new Violation(Code.SCHEMA_MISMATCH, f.name, p));
+            }
+            if (!problems.isEmpty()) {
                 return null;
             }
-            if (f.schema != null) {
-                List<String> problems = JsonSchema.validate(f.schema, doc, f.secret);
-                for (String p : problems) {
-                    out.add(new Violation(Code.SCHEMA_MISMATCH, f.name, p));
-                }
-                if (!problems.isEmpty()) {
-                    return null;
-                }
-            }
-            return doc;
         }
-        return o.value();
+        return doc;
     }
 
-    private static boolean isJson(FileSpec f, Path path) {
-        return f.format != null ? f.format.equals("json") : path.toString().endsWith(".json");
+    /** A config file's format: as declared, else from the extension. */
+    private static String format(FileSpec f, Path path) {
+        if (f.format != null) {
+            return f.format;
+        }
+        String name = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        return name.endsWith(".yaml") || name.endsWith(".yml") ? "yaml" : name.endsWith(".toml") ? "toml" : "json";
     }
 
     private static String quote(String s) {

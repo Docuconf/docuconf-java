@@ -80,6 +80,10 @@ public final class DeclarationValidator {
         }
         description(n, v.description);
         details(n, v.details);
+        deprecated(n, v.deprecated, v.required);
+        if (v.type == VarType.KEY_SET) {
+            keySet(v);
+        }
         if (v.required && v.defaultValue != null) {
             errors.add(n + ": a required variable cannot have a default");
         }
@@ -156,6 +160,73 @@ public final class DeclarationValidator {
         }
     }
 
+    /** The most characters (Unicode code points) a deprecation message may have (SPEC section 4.2). */
+    public static final int MAX_DEPRECATION_MESSAGE = 500;
+
+    /**
+     * SPEC section 4.2: a deprecation message is not blank and at most {@link #MAX_DEPRECATION_MESSAGE}
+     * characters, and a required input cannot be deprecated, since the platform could not stop setting it.
+     */
+    private void deprecated(String n, Deprecation d, boolean required) {
+        if (d == null) {
+            return;
+        }
+        String problem = deprecationProblem(d.message());
+        if (problem != null) {
+            errors.add(n + ": " + problem);
+        }
+        if (required) {
+            errors.add(n + ": a required input cannot be deprecated, since the platform could not stop setting it;"
+                    + " make it optional first");
+        }
+        if (d.replacedBy() != null && d.replacedBy().isBlank()) {
+            errors.add(n + ": deprecated replacedBy must name an input");
+        }
+    }
+
+    /**
+     * Why a deprecation message cannot go in a contract, or {@code null} when it can.
+     *
+     * @param message the message
+     * @return the problem, or {@code null}
+     */
+    public static String deprecationProblem(String message) {
+        if (message == null || message.isBlank()) {
+            return "the deprecation message must not be blank; say what to use instead, or why the input is going"
+                    + " away";
+        }
+        int n = message.codePointCount(0, message.length());
+        return n > MAX_DEPRECATION_MESSAGE ? "the deprecation message is " + n
+                + " characters (Unicode code points); the most is " + MAX_DEPRECATION_MESSAGE : null;
+    }
+
+    /** SPEC section 4.3: a key set is always secret, and its bounds are consistent. */
+    private void keySet(VarSpec v) {
+        String n = v.name;
+        if (!v.secret) {
+            errors.add(n + ": a key set is always secret");
+        }
+        if (v.minKeys != null && v.minKeys < 1) {
+            errors.add(n + ": minKeys must be at least 1");
+        }
+        if (v.maxKeysOrDefault() < v.minKeysOrDefault()) {
+            errors.add(n + ": maxKeys (" + v.maxKeysOrDefault() + ") is less than minKeys (" + v.minKeysOrDefault()
+                    + ")");
+        }
+        if (v.keyMinLength != null && v.keyMinLength < 1) {
+            errors.add(n + ": keyMinLength must be at least 1");
+        }
+        if (v.keyMaxLength != null && v.keyMaxLength < 1) {
+            errors.add(n + ": keyMaxLength must be at least 1");
+        }
+        if (v.keyMinLength != null && v.keyMaxLength != null && v.keyMinLength > v.keyMaxLength) {
+            errors.add(n + ": keyMinLength is greater than keyMaxLength");
+        }
+        if (v.encoding != null && !java.util.Set.of("csv", "json", "indexed").contains(v.encoding)) {
+            errors.add(n + ": a key set's encoding is csv, json or indexed");
+        }
+    }
+
     private void checkValue(VarSpec v, Object value, String what) {
         Object typed;
         try {
@@ -198,6 +269,7 @@ public final class DeclarationValidator {
                 }
                 yield l;
             }
+            case KEY_SET -> throw new IllegalArgumentException("a key set has no value in the contract");
             case JSON -> value;
         };
     }
@@ -252,6 +324,7 @@ public final class DeclarationValidator {
         }
         description(n, f.description);
         details(n, f.details);
+        deprecated(n, f.deprecated, f.required);
         if (f.path == null || !ABS_PATH.matcher(f.path).matches() || f.path.contains("//") || f.path.endsWith("/")
                 || f.path.matches(".*(^|/)\\.\\.?(/|$).*")) {
             errors.add(n + ": path " + f.path + " must be absolute and normalised");

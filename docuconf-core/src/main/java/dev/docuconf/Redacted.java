@@ -49,6 +49,7 @@ public final class Redacted {
             for (RecordComponent rc : type.getRecordComponents()) {
                 boolean secret = rc.isAnnotationPresent(Secret.class) || field(type, rc.getName()) != null
                         && field(type, rc.getName()).isAnnotationPresent(Secret.class);
+                secret = secret || rc.getType() == KeySet.class;
                 out.add(rc.getName() + "=" + (secret ? MARK : value(rc.getAccessor(), object)));
             }
         } else {
@@ -57,7 +58,8 @@ public final class Redacted {
                     if (Modifier.isStatic(f.getModifiers()) || f.isSynthetic()) {
                         continue;
                     }
-                    out.add(f.getName() + "=" + (f.isAnnotationPresent(Secret.class) ? MARK : value(f, object)));
+                    boolean secret = f.isAnnotationPresent(Secret.class) || f.getType() == KeySet.class;
+                    out.add(f.getName() + "=" + (secret ? MARK : value(f, object)));
                 }
             }
         }

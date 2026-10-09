@@ -60,7 +60,10 @@ public final class GoDuration {
      */
     public static String format(Duration d) {
         if (d.isNegative()) {
-            throw new IllegalArgumentException("contract durations cannot be negative: " + d);
+            if (d.equals(Duration.ofSeconds(Long.MIN_VALUE))) {
+                throw new IllegalArgumentException("duration out of range: " + d);
+            }
+            return "-" + format(d.negated());
         }
         if (d.isZero()) {
             return "0s";

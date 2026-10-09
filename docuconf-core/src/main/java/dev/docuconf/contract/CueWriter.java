@@ -164,6 +164,16 @@ public final class CueWriter {
                 opt("itemMinLength", v.itemMinLength);
                 opt("itemMaxLength", v.itemMaxLength);
             }
+            case KEY_SET -> {
+                opt("encoding", v.encoding);
+                if (v.separator != null && !v.separator.equals(",")) {
+                    field("separator", v.separator);
+                }
+                opt("minKeys", v.minKeys);
+                opt("maxKeys", v.maxKeys);
+                opt("keyMinLength", v.keyMinLength);
+                opt("keyMaxLength", v.keyMaxLength);
+            }
             case JSON -> {
                 opt("maxLength", v.maxLength);
                 opt("schema", v.schema);

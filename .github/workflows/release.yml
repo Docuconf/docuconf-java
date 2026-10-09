@@ -48,6 +48,13 @@ jobs:
       - name: Install cue
         run: go install cuelang.org/go/cmd/cue@v0.17.1
 
+      # The shared export check (ExportConformanceTest) runs the docuconf CLI of the pinned docuconf-go.
+      - name: Install the docuconf CLI
+        working-directory: docuconf-go/cmd/docuconf
+        run: |
+          go install .
+          echo "DOCUCONF_CLI=$(go env GOPATH)/bin/docuconf" >> "$GITHUB_ENV"
+
       - name: Set the version from the tag
         # processAllModules: docuconf-bom has no parent, so it is not updated as a child.
         run: mvn -B -ntp versions:set -DnewVersion="${GITHUB_REF_NAME#v}" -DprocessAllModules=true -DgenerateBackupPoms=false
@@ -103,6 +110,13 @@ jobs:
 
       - name: Install cue
         run: go install cuelang.org/go/cmd/cue@v0.17.1
+
+      # The shared export check (ExportConformanceTest) runs the docuconf CLI of the pinned docuconf-go.
+      - name: Install the docuconf CLI
+        working-directory: docuconf-go/cmd/docuconf
+        run: |
+          go install .
+          echo "DOCUCONF_CLI=$(go env GOPATH)/bin/docuconf" >> "$GITHUB_ENV"
 
       - name: Set the version from the tag
         run: |

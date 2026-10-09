@@ -23,6 +23,7 @@ import java.io.InputStream;
 import java.lang.annotation.Annotation;
 import java.math.BigInteger;
 import java.net.URL;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -86,6 +87,8 @@ public final class DocuconfChecker {
     private final List<ConversionService> conversion;
     private final Binder binder;
     private final List<String> warnings = new ArrayList<>();
+    /** Values outside SPEC §5's exact grammar, found by {@link #normalizeEnvironment()}, by variable. */
+    private final Map<String, Violation> strictProblems = new LinkedHashMap<>();
 
     /**
      * Creates a checker.
@@ -106,6 +109,7 @@ public final class DocuconfChecker {
         ApplicationConversionService conversion = new ApplicationConversionService();
         conversion.addConverter(new DocuconfFileConverter(files));
         conversion.addConverter(new DocuconfJsonConverter());
+        conversion.addConverter(new DocuconfKeySetConverter());
         this.conversion = List.of(conversion);
         this.binder = binder(environment);
     }
@@ -174,7 +178,8 @@ public final class DocuconfChecker {
      */
     public List<Violation> check() {
         typoHints();
-        hideEmptyValues();
+        strictProblems.clear();
+        normalizeEnvironment();
         List<Violation> out = new ArrayList<>(overlayProblems());
         Set<String> failed = new HashSet<>();
         out.addAll(checkVars(binder, failed));
@@ -186,6 +191,10 @@ public final class DocuconfChecker {
                 Path path = FileChecker.resolve(f, this::lookup);
                 Object value = loadFile(f, b, path, found);
                 files.put(f.name, path, value, f.reload);
+                if (f.deprecated != null && (f.type == FileType.TLS ? Files.isDirectory(path) : Files.exists(path))) {
+                    // SPEC §11.2: a deprecated input that is set warns, naming it and its message.
+                    warnings.add(dev.docuconf.check.ContractFirst.deprecationMessage(f.name, f.deprecated));
+                }
                 if (!found.isEmpty()) {
                     failed.add(f.name);
                     out.addAll(found);
@@ -345,30 +354,138 @@ public final class DocuconfChecker {
     }
 
     /**
-     * SPEC §5: an empty value means unset for every type but string. Spring would bind "" as null, which fails
-     * for primitives and skips {@code @DefaultValue}, so empty variables of other types are hidden from it.
+     * Prepares the environment variables for Spring's binder, so it binds what SPEC §5 reads:
+     *
+     * <ul>
+     *   <li>an empty value means unset for every type but string. Spring would bind "" as null, which fails for
+     *       primitives and skips {@code @DefaultValue}, so empty variables of other types are hidden from it;</li>
+     *   <li>a value outside SPEC §5's exact grammar for its type is recorded as {@code invalid_type} (or
+     *       {@code out_of_range}), where Spring is more lenient: {@code yes}, {@code on} or {@code 1} for a bool,
+     *       {@code 0x10} or {@code #10} for an int, the simple format {@code 30s} for an {@code iso8601} duration,
+     *       a list item with spaces around it, which Spring would trim, or an empty one, which it would drop;</li>
+     *   <li>a valid value Spring would read differently is replaced by its canonical form: {@code 010} is the int
+     *       10, never octal 8, and {@code TRUE} the bool true.</li>
+     * </ul>
      */
-    private void hideEmptyValues() {
+    private void normalizeEnvironment() {
         PropertySource<?> env = environment.getPropertySources()
                 .get(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
         if (!(env instanceof SystemEnvironmentPropertySource system)) {
             return;
         }
+        Map<String, Object> source = system.getSource();
+        Map<String, Object> changed = new LinkedHashMap<>();
         Set<String> hidden = new HashSet<>();
         for (ContractBundle bundle : bundles) {
             for (VarSpec v : bundle.contract().vars.values()) {
-                if (v.type != VarType.STRING && "".equals(system.getSource().get(v.name))) {
-                    hidden.add(v.name);
+                for (String name : envNames(v, bundle.bindings().vars.get(v.name))) {
+                    if (!(source.get(name) instanceof String raw)) {
+                        continue;
+                    }
+                    if (raw.isEmpty()) {
+                        if (v.type != VarType.STRING) {
+                            hidden.add(name);
+                        }
+                        continue;
+                    }
+                    try {
+                        String canonical = canonical(v, raw);
+                        if (canonical != null && !canonical.equals(raw)) {
+                            changed.put(name, canonical);
+                        }
+                    } catch (WireFormat.WireException e) {
+                        strictProblems.putIfAbsent(v.name, new Violation(e.code(), v.name, e.getMessage()
+                                + (v.secret ? "" : " (got " + quote(raw) + ")")
+                                + (name.equals(v.name) ? "" : " (set as " + name + ")")));
+                    }
                 }
             }
         }
-        if (hidden.isEmpty()) {
+        if (hidden.isEmpty() && changed.isEmpty()) {
             return;
         }
-        Map<String, Object> filtered = new LinkedHashMap<>(system.getSource());
+        Map<String, Object> filtered = new LinkedHashMap<>(source);
         filtered.keySet().removeAll(hidden);
+        filtered.putAll(changed);
         environment.getPropertySources().replace(system.getName(),
                 new SystemEnvironmentPropertySource(system.getName(), filtered));
+    }
+
+    /** The environment variable names Spring binds a contract variable from. */
+    private static Set<String> envNames(VarSpec v, Bindings.PropertyBinding b) {
+        Set<String> names = new java.util.LinkedHashSet<>();
+        names.add(v.name);
+        String key = b != null ? b.configKey() : v.configKey;
+        if (key != null) {
+            names.add(Names.envName(key));
+            names.add(Names.underscoredEnvName(key));
+        }
+        return names;
+    }
+
+    /**
+     * A raw environment value in the form Spring's binder reads as SPEC §5 does, or {@code null} to leave it.
+     *
+     * @throws WireFormat.WireException when the value is not in the type's exact grammar
+     */
+    private static String canonical(VarSpec v, String raw) {
+        if (TRIM_SENSITIVE.contains(v.type) && !raw.equals(raw.strip())) {
+            // Values are never trimmed. Spring would trim " 8080"; the platform and contract-first mode reject it.
+            throw new WireFormat.WireException(Code.INVALID_TYPE, "is not a valid " + describe(v)
+                    + ": it has leading or trailing whitespace");
+        }
+        try {
+            return canonicalForm(v, raw);
+        } catch (WireFormat.WireException e) {
+            throw v.type == VarType.LIST ? e : new WireFormat.WireException(e.code(), "is not a valid "
+                    + describe(v));
+        }
+    }
+
+    private static String canonicalForm(VarSpec v, String raw) {
+        switch (v.type) {
+            case INT -> {
+                if (!WireFormat.isInteger(raw)) {
+                    throw new WireFormat.WireException(Code.INVALID_TYPE, "is not an integer");
+                }
+                // Out of the 64-bit range is left to the binder, which reports out_of_range for the Java type.
+                return new java.math.BigInteger(raw.startsWith("+") ? raw.substring(1) : raw).toString();
+            }
+            case FLOAT -> {
+                WireFormat.parseFloat(raw);
+                return null;
+            }
+            case BOOL -> {
+                return Boolean.toString(WireFormat.parseBool(raw));
+            }
+            case DURATION -> {
+                return WireFormat.parseDuration(raw, v.encoding).toString();
+            }
+            case LIST -> {
+                List<String> items = WireFormat.splitCsv(raw, v.separator);
+                List<String> out = new ArrayList<>();
+                for (int i = 0; i < items.size(); i++) {
+                    String item = items.get(i);
+                    if ("int".equals(v.items)) {
+                        if (!WireFormat.isInteger(item)) {
+                            throw new WireFormat.WireException(Code.INVALID_TYPE, "item " + i + " is not an integer");
+                        }
+                        out.add(new java.math.BigInteger(item.startsWith("+") ? item.substring(1) : item).toString());
+                    } else if (item.isEmpty() || !item.equals(item.strip())) {
+                        // Spring trims list items and drops empty ones; SPEC section 5 never trims.
+                        throw new WireFormat.WireException(Code.INVALID_TYPE, "item " + i + (item.isEmpty()
+                                ? " is empty, and Spring would drop it" : " has leading or trailing whitespace, which"
+                                + " Spring would trim") + "; list items are never trimmed (SPEC section 5)");
+                    } else {
+                        out.add(item);
+                    }
+                }
+                return String.join(v.separator == null ? "," : v.separator, out);
+            }
+            default -> {
+                return null;
+            }
+        }
     }
 
     /**
@@ -434,6 +551,11 @@ public final class DocuconfChecker {
         Violation gap = v.type == VarType.LIST ? indexedGap(v) : null;
         if (gap != null) {
             out.add(gap);
+            return out;
+        }
+        Violation strict = strictProblems.get(v.name);
+        if (strict != null) {
+            out.add(strict);
             return out;
         }
         boolean empty = raw != null && raw.isEmpty();
@@ -503,8 +625,7 @@ public final class DocuconfChecker {
                     + " kubectl --from-file?)");
         }
         if (v.deprecated != null) {
-            warnings.add(v.name + " is deprecated: " + v.deprecated.message()
-                    + (v.deprecated.replacedBy() == null ? "" : "; use " + v.deprecated.replacedBy()));
+            warnings.add(dev.docuconf.check.ContractFirst.deprecationMessage(v.name, v.deprecated));
         }
         Object value;
         try {
@@ -609,7 +730,8 @@ public final class DocuconfChecker {
                         Map.of("value", ChronoUnit.valueOf(b.durationUnit())), DurationUnit.class, null));
             }
         }
-        if (v.type == VarType.LIST && v.separator != null && !v.separator.equals(",")) {
+        if ((v.type == VarType.LIST || v.type == VarType.KEY_SET) && v.separator != null
+                && !v.separator.equals(",")) {
             annotations.add(AnnotationUtils.synthesizeAnnotation(Map.of("value", v.separator), Delimiter.class, null));
         }
         return Bindable.of(type).withAnnotations(annotations.toArray(new Annotation[0]));
@@ -638,6 +760,8 @@ public final class DocuconfChecker {
             }
             case JSON:
                 return typed;
+            case KEY_SET:
+                return typed; // VarChecker takes the KeySet itself; its toString() never prints the keys
             default:
                 return typed.toString();
         }
@@ -748,6 +872,7 @@ public final class DocuconfChecker {
             case DURATION -> "duration; expected an ISO 8601 duration like PT30S (Spring also reads one unit, as in"
                     + " 30s)";
             case LIST -> "list of " + v.items + "s";
+            case KEY_SET -> "key set";
             case ENUM -> "value; use one of " + String.join(", ", v.values);
             default -> v.type.id();
         };

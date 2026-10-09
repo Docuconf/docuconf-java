@@ -217,18 +217,42 @@ public record OrdersProperties(
 
 Each `@Docuconf` class of the service goes into the same contract, and its prefix names its variables. The
 example's [`WebhookProperties`](examples/orders/src/main/java/dev/docuconf/examples/orders/WebhookProperties.java)
-is `WEBHOOK_KEYS`, a secret list of one or two keys of 32 to 256 characters each, which lets a key be rotated
-without downtime ([SPEC section 6.1](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation)):
+is `WEBHOOK_KEYS`, a **key set**: one or two keys of 32 to 256 characters each, all valid at once, which lets a key
+be rotated without downtime ([SPEC section 6.1](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation)).
+Declare it as a `KeySet`, which exports as `type: "keySet"` and is always secret:
 
 ```java
 @Docuconf(service = "orders")
 @Validated
 @ConfigurationProperties("webhook")
 public record WebhookProperties(
-        // @Secret: from a Secret only, never printed. @Size bounds the list to 1 or 2 keys, and the @Size on the
-        // item type bounds each key, so an empty or truncated key fails startup with out_of_range.
-        @Secret @Size(min = 1, max = 2) List<@Size(min = 32, max = 256) String> keys) {
+        // A KeySet is always secret: from a Secret only, never printed, not even by this record's toString().
+        // 1 or 2 keys (the default), so one can be rotated; each key 32 to 256 characters, so an empty or
+        // truncated key fails startup with out_of_range.
+        @KeySetLimits(keyMinLength = 32, keyMaxLength = 256) KeySet keys) {
+}
 ```
+
+Verify with the helper, which runs your check against every key without stopping at the first match, so the time
+taken does not say which key matched
+([`Webhooks`](examples/orders/src/main/java/dev/docuconf/examples/orders/Webhooks.java)):
+
+```java
+// Every key is tried; MessageDigest.isEqual compares in constant time.
+return keys.anyMatch(key -> MessageDigest.isEqual(hmac(key, body), got));
+```
+
+For an inbound API key, `contains` is a constant-time lookup:
+
+```java
+boolean known = apiKeys.contains(header);
+```
+
+`keys()` lists the keys in the order the platform gave them (`old,new` during a rotation). A `KeySet` prints as
+`KeySet[2 keys, [redacted]]`, so a record holding one needs no `toString()` override. The number of keys outside
+`minKeys`..`maxKeys` (default 1..2) is `too_few_items` or `too_many_items`; a key outside
+`keyMinLength`..`keyMaxLength`, or an empty key (a stray comma), is `out_of_range`. Keys are never trimmed. The
+generated docs print the rotation steps for every key set.
 
 ## 3. Run
 
@@ -401,6 +425,8 @@ the startup check catches whatever still gets through.
 |---|---|
 | `@Docuconf(service = ...)` | Marks the class. The service name may also come from `spring.application.name` in `application.yml`. `enumCase` and `envNames` are below. |
 | `@Secret` | Must come from a Kubernetes Secret; no default anywhere; never printed. |
+| `@KeySetLimits(minKeys, maxKeys, keyMinLength, keyMaxLength)` on `KeySet` | A key set's bounds: how many keys (default 1 to 2), and each key's length in characters. A `KeySet` is always secret. |
+| `@Deprecated`, `@DeprecatedConfigurationProperty(reason, replacement)` | `deprecated: {message, replacedBy}`. The reason must not be blank and is at most 500 characters; a required property cannot be deprecated (the build fails). At startup a deprecated input that is set logs a warning naming it and the reason, never its value. |
 | `@UrlSchemes({...})` | A `url` with allowed schemes (on `String`, `URI` or `URL`). |
 | `@EnumValues(EnumCase.LOWER)` | How this enum property's values are spelled in the contract (`AS_DECLARED`, `LOWER`, `KEBAB`); `@Docuconf(enumCase = ...)` sets it for the class. |
 | `@Json` | One variable holding JSON, bound with Jackson; the contract carries a JSON Schema of the type (with a top-level `@Size`/`@NotEmpty` as `minItems`/`maxItems`). |
@@ -441,14 +467,15 @@ CONFIG.agents.md from the exported contract: `docuconf docs contract.cue -o CONF
 
 | Java | Contract |
 |---|---|
-| Property `orders.database-url` | Variable `ORDERS_DATABASEURL`, the name Spring's relaxed binding documents for environment variables (`configKey` keeps the property name). Nested classes add segments: `ORDERS_DB_POOLSIZE`. `@Docuconf(envNames = EnvNames.UNDERSCORED)` exports `ORDERS_DATABASE_URL` instead, which Spring binds too; the build fails if two properties would share a name. |
+| Property `orders.database-url` | Variable `ORDERS_DATABASEURL`, the name Spring's relaxed binding documents for environment variables (`configKey` keeps the property name). Nested classes add segments: `ORDERS_DB_POOLSIZE`. `@Docuconf(envNames = EnvNames.UNDERSCORED)` exports `ORDERS_DATABASE_URL` instead, which Spring binds too; the build fails if two properties would share a name. An empty prefix binds at the root, as Spring allows: `port` is `PORT`. |
 | `String`, `Path`, `Locale`, ... | `string`. `@Size` → `minLength`/`maxLength`; `@NotBlank` → required, `minLength: 1`, `pattern: "\\S"`. |
-| `@Pattern(regexp = "p")` | `pattern: "^(?:p)$"`: `@Pattern` matches the whole value, contract patterns match anywhere (SPEC section 4.3). Patterns using Java-only regex features fail the build. |
+| `@Pattern(regexp = "p")` | `pattern: "^(?:p)$"`: `@Pattern` matches the whole value, contract patterns match anywhere (SPEC section 4.3). A pattern already anchored at both ends, with no top-level `\|` (`^[a-z]+$`), is exported as it is. Patterns using Java-only regex features fail the build. |
 | `int`, `long`, `Integer`, ... | `int`, with `@Min`/`@Max`/`@Range`/`@Positive`... A type narrower than 64 bits also exports its own range (`int`: `min: -2147483648`, `max: 2147483647`). An `int` without a default is 0 when unset, so `@Min(1) int` needs `@DefaultValue` or `@NotNull Integer`; the build says so. |
 | `double`, `BigDecimal`, ... | `float`, with inclusive `@DecimalMin`/`@DecimalMax`. Exclusive bounds (`@Positive`) have no contract form and are checked only at startup. |
-| `Duration` | `duration` with `encoding: "iso8601"`; `@DurationMin`/`@DurationMax` → `min`/`max`. Spring's simple format takes one unit (`90s`), so the Go form `1m30s` does not parse; the error says `expected an ISO 8601 duration like PT30S`. |
+| `Duration` | `duration` with `encoding: "iso8601"`; `@DurationMin`/`@DurationMax` → `min`/`max`. In the environment the value is ISO 8601 (`PT1M30S`), as the platform renders it; Spring's simple format (`90s`) works in `application.yml` and `@DefaultValue`, but not in an environment variable (SPEC section 5), where the error says `expected an ISO 8601 duration like PT30S`. |
 | `URI`, `URL`, or `@UrlSchemes` | `url`. `@MaxLength`, or `@Size(max)` on a `String`, → `maxLength`. |
 | an `enum` | `enum` with the constant names, or as `enumCase` spells them. The platform checks that spelling exactly; the app accepts any case Spring accepts (`warn` for `WARN`), wherever the value comes from. |
+| `KeySet` | `keySet`, always secret, `encoding: "csv"` (`@Delimiter` sets `separator`); `@KeySetLimits` → `minKeys`, `maxKeys`, `keyMinLength`, `keyMaxLength`. Bound by docuconf's converter, which splits on the separator without trimming. |
 | `List`/`Set`/array of strings, ints or enums | `list`, `encoding: "csv"` (`@Delimiter` sets `separator`). `@Size`/`@NotEmpty` → `minItems`/`maxItems`. `List<@Min(0) @Max(1023) Integer>` → `itemMin`/`itemMax`. On string items, `List<@Size(min = 2, max = 4) String>` → `itemMinLength`/`itemMaxLength`, checked on each item after splitting, so the separator is never counted. `@Size` on int items fails the build. Spring also reads one variable per item (`ORDERS_SHARDS_0`, `ORDERS_SHARDS__1`): items must be numbered from 0 with no gap (SPEC section 5). |
 | `@NotNull`/`@NotBlank`/`@NotEmpty` without a default | `required: true` |
 | Field initializer, `@DefaultValue`, value in `application.yml` | `default` (the yml value wins, as in Spring); a required property with one becomes optional. |
@@ -472,6 +499,12 @@ finds it either way. Prefer the exported `contract.cue` from step 6.
 - An empty variable means unset for every type but `string` (SPEC section 5): `@DefaultValue` and initializers
   apply.
 - Values are never trimmed (SPEC section 5): `ORDERS_PORT=" 8080"` is `invalid_type`, as the platform says.
+- Environment variables are parsed exactly as SPEC section 5 says, wherever Spring would be more lenient, so the
+  app accepts exactly what the platform and every other SDK accept. A `bool` is `true` or `false` in any case, never
+  `yes`, `on` or `1`. An `int` is decimal digits with an optional sign: `0x10` and `1e3` are `invalid_type`, and
+  `010` is 10, never octal 8. A `float` has a digit on each side of its point (`.5` is `invalid_type`). A duration
+  is ISO 8601 (`PT30S`, not `30s`). A list item with spaces around it, which Spring would trim, or an empty one,
+  which it would drop, is `invalid_type`. Each is reported as `invalid_type` with the other problems.
 - A value Spring read under its other name is named in the message: `... (set as ORDERS_WORKER_COUNT)`.
 - Other Bean Validation constraints on the classes (`@Email`, custom ones) are reported in the same list, with
   their own message; for a secret, the value is redacted from it.
@@ -532,16 +565,34 @@ For tests, load any map; nothing is read from the process:
 ContractFirst.Result r = ContractFirst.load(json, Map.of("PORT", "8080"));
 ```
 
-It parses every wire encoding of SPEC section 5 and checks constraints with the same code the Spring path uses.
-Values are `String`, `Long`, `BigDecimal`, `Boolean`, `Duration`, lists, and the parsed JSON of `json` variables.
+It parses every wire encoding of SPEC section 5, exactly (the strict rules above), and checks constraints with the
+same code the Spring path uses. Values are `String`, `Long`, `BigDecimal`, `Boolean`, `Duration`, lists, a `KeySet`,
+and the parsed JSON of `json` variables. It also reads the contract's file inputs (`r.files()`: config files in
+JSON, YAML and TOML as data, text files as text, TLS key pairs, CA bundles and PKCS#12 keystores checked), profiles
+and config-file overlays, in the order default, profile, overlay, environment, all under `DOCUCONF_FILE_ROOT`. YAML
+and TOML are read with Jackson's YAML or TOML module, found at run time (Jackson 3, else Jackson 2), so
+`docuconf-core` keeps no dependency. A deprecated variable that is set loads, with a warning in `r.warnings()`.
 
 ## Conformance
 
 `ConformanceTest` (in `docuconf-core`) runs the shared suite from docuconf-go (`conformance/cases.json`, SPEC
-section 12) through the contract-first mode, one JUnit test per case. Set `DOCUCONF_CONFORMANCE` to the file and
-`DOCUCONF_REQUIRE_CONFORMANCE=1` to fail instead of skipping when it is missing; without them it looks for
-`docuconf-go/conformance/cases.json` in the working directory and its parents. CI runs it against docuconf-go
-`main`. Skipped capability tags: none.
+section 12) through the contract-first mode, one JUnit test per case. Each case runs in a new, empty directory
+holding its files, which is the case's `DOCUCONF_FILE_ROOT`. Set `DOCUCONF_CONFORMANCE` to the file and
+`DOCUCONF_REQUIRE_CONFORMANCE=1` to fail instead of skipping when it is missing, and to fail when any case is
+skipped; without them it looks for `docuconf-go/conformance/cases.json` in the working directory and its parents.
+CI runs it against the pinned docuconf-go commit, and nightly against `main`.
+
+**Capability tags.** The runner keeps an allow-list of the tags this SDK supports: `int64`, `json-schema`,
+`key-set`, `deprecated`, `strict-parsing`, `files`, `profiles` and `overlays`, which is every tag in the suite. No
+case is skipped. A case with a tag the runner does not know is skipped, never run (SPEC section 12), and CI fails
+on any skipped case.
+
+**Export.** `ExportConformanceTest` (in `docuconf-processor`) declares the suite's export fixture
+(`conformance/export/fixture.yaml`) as a `@ConfigurationProperties` class,
+[`FixtureProperties`](docuconf-processor/src/test/resources/export-fixture/FixtureProperties.java), exports it and
+runs `docuconf conformance export --golden conformance/export/golden.cue` on the result (the CLI from `DOCUCONF_CLI`
+or the `PATH`), which must exit 0 with no differences. `GoldenContractTest` in `docuconf-sample` still compares this SDK's own, larger fixture with its golden
+file.
 
 ## Troubleshooting
 

@@ -87,10 +87,6 @@ public final class VarChecker {
             }
             case DURATION -> {
                 Duration d = (Duration) value;
-                if (d.isNegative()) {
-                    out.add(new Violation(Code.OUT_OF_RANGE, v.name, "must not be negative" + shown));
-                    break;
-                }
                 if (v.min != null && d.compareTo(GoDuration.parse((String) v.min)) < 0) {
                     out.add(new Violation(Code.OUT_OF_RANGE, v.name, "is below min " + v.min + shown));
                 }
@@ -165,6 +161,37 @@ public final class VarChecker {
                                     + " characters, above itemMaxLength " + v.itemMaxLength + got));
                             break;
                         }
+                    }
+                }
+            }
+            case KEY_SET -> {
+                // SPEC §4.3: the number of keys is too_few_items/too_many_items; a key outside its lengths, and an
+                // empty key whatever the bounds, is out_of_range. Like every secret, no message holds a key.
+                List<?> keys = value instanceof dev.docuconf.KeySet ks ? ks.keys() : (List<?>) value;
+                if (keys.size() < v.minKeysOrDefault()) {
+                    out.add(new Violation(Code.TOO_FEW_ITEMS, v.name,
+                            "has " + keys.size() + " keys; at least " + v.minKeysOrDefault() + " required"));
+                }
+                if (keys.size() > v.maxKeysOrDefault()) {
+                    out.add(new Violation(Code.TOO_MANY_ITEMS, v.name,
+                            "has " + keys.size() + " keys; at most " + v.maxKeysOrDefault() + " allowed"));
+                }
+                for (int i = 0; i < keys.size(); i++) {
+                    int len = length(String.valueOf(keys.get(i)));
+                    if (len == 0) {
+                        out.add(new Violation(Code.OUT_OF_RANGE, v.name, "key " + i
+                                + " is empty (a stray separator?)"));
+                        break;
+                    }
+                    if (v.keyMinLength != null && len < v.keyMinLength) {
+                        out.add(new Violation(Code.OUT_OF_RANGE, v.name, "key " + i + " is " + len
+                                + " characters, below keyMinLength " + v.keyMinLength));
+                        break;
+                    }
+                    if (v.keyMaxLength != null && len > v.keyMaxLength) {
+                        out.add(new Violation(Code.OUT_OF_RANGE, v.name, "key " + i + " is " + len
+                                + " characters, above keyMaxLength " + v.keyMaxLength));
+                        break;
                     }
                 }
             }

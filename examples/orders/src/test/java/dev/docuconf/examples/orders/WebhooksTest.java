@@ -3,6 +3,8 @@ package dev.docuconf.examples.orders;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
+import dev.docuconf.KeySet;
+import dev.docuconf.spring.DocuconfKeySetConverter;
 import dev.docuconf.spring.DocuconfTester;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
@@ -10,6 +12,8 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
@@ -24,13 +28,16 @@ class WebhooksTest {
         return HexFormat.of().formatHex(Webhooks.hmac(key, BODY));
     }
 
-    /** Binds WEBHOOK_KEYS as Spring does at startup, after docuconf's check passes. */
-    private static List<String> keys(String value) {
+    /** Binds WEBHOOK_KEYS as Spring does at startup (with docuconf's KeySet converter), after the check passes. */
+    private static KeySet keys(String value) {
         var result = DocuconfTester.env(Map.of("ORDERS_DATABASEURL", DB, "WEBHOOK_KEYS", value)).check();
         assertEquals(List.of(), result.codes());
         var env = new StandardEnvironment();
         env.getPropertySources().addFirst(new SystemEnvironmentPropertySource("env", Map.of("WEBHOOK_KEYS", value)));
-        return Binder.get(env).bind("webhook", WebhookProperties.class).get().keys();
+        var conversion = new ApplicationConversionService();
+        conversion.addConverter(new DocuconfKeySetConverter());
+        return new Binder(ConfigurationPropertySources.get(env), null, conversion)
+                .bind("webhook", WebhookProperties.class).get().keys();
     }
 
     /** A key rotation: each step is a rollout with a new WEBHOOK_KEYS, and the key in use always verifies. */
@@ -40,7 +47,7 @@ class WebhooksTest {
         }
         for (Step s : List.of(new Step("before", OLD, true, false), new Step("overlap", OLD + "," + NEW, true, true),
                 new Step("after", NEW, false, true))) {
-            List<String> set = keys(s.keys());
+            KeySet set = keys(s.keys());
             assertEquals(s.old(), Webhooks.verify(set, BODY, sign(OLD)), s.name() + ": old key");
             assertEquals(s.neu(), Webhooks.verify(set, BODY, sign(NEW)), s.name() + ": new key");
             assertFalse(Webhooks.verify(set, BODY, sign("x".repeat(32))), s.name() + ": another key");
@@ -49,8 +56,8 @@ class WebhooksTest {
 
     @Test
     void aBadOrMissingSignatureIsRejected() {
-        assertFalse(Webhooks.verify(List.of(OLD), BODY, "not hex"));
-        assertFalse(Webhooks.verify(List.of(OLD), BODY, null));
+        assertFalse(Webhooks.verify(KeySet.of(OLD), BODY, "not hex"));
+        assertFalse(Webhooks.verify(KeySet.of(OLD), BODY, null));
         assertFalse(Webhooks.verify(null, BODY, sign(OLD))); // no keys configured
     }
 
@@ -62,10 +69,13 @@ class WebhooksTest {
                 OLD + "," + NEW.substring(0, 10), "out_of_range WEBHOOK_KEYS",
                 OLD + "," + NEW + "," + "x".repeat(32), "too_many_items WEBHOOK_KEYS");
         cases.forEach((value, want) -> {
+            // A key set is never printed: not in a violation, and not by the bound properties' toString().
             var result = DocuconfTester.env(Map.of("ORDERS_DATABASEURL", DB, "WEBHOOK_KEYS", value)).check();
             assertEquals(List.of(want), result.codes(), value.length() + " characters");
             String printed = result.violations().toString();
             assertFalse(printed.contains(OLD) || printed.contains(NEW.substring(0, 10)), printed);
         });
+        assertEquals("WebhookProperties[keys=KeySet[2 keys, [redacted]]]",
+                new WebhookProperties(KeySet.of(OLD, NEW)).toString());
     }
 }

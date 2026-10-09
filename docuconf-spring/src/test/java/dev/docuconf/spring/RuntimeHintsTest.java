@@ -65,6 +65,53 @@ class RuntimeHintsTest {
     }
 
     @Test
+    void aKeySetIsCheckedWithoutPrintingAKey() {
+        String key = "key-0123456789";
+        env.put("SHOP_WEBHOOKKEYS", key + ",");
+        DocuconfTester.Result r = check();
+        assertEquals(List.of("out_of_range SHOP_WEBHOOKKEYS"), r.codes());
+        assertEquals("key 1 is empty (a stray separator?)", r.violations().get(0).message());
+
+        env.put("SHOP_WEBHOOKKEYS", key + "," + key + "-new," + key + "-third");
+        r = check();
+        assertEquals(List.of("too_many_items SHOP_WEBHOOKKEYS"), r.codes());
+
+        env.put("SHOP_WEBHOOKKEYS", "short," + key);
+        r = check();
+        assertEquals(List.of("out_of_range SHOP_WEBHOOKKEYS"), r.codes());
+        assertEquals("key 0 is 5 characters, below keyMinLength 8", r.violations().get(0).message());
+        assertFalse(r.toString().contains(key), r.toString());
+
+        env.put("SHOP_WEBHOOKKEYS", " " + key + "," + key);
+        assertTrue(check().ok(), "keys are never trimmed, so a padded key is just a longer key");
+    }
+
+    @Test
+    void aDeprecatedVariableThatIsSetLoadsWithAWarning() {
+        env.put("SHOP_LEGACYPORT", "7070");
+        DocuconfTester.Result r = check();
+        assertTrue(r.ok(), r.violations().toString());
+        assertEquals(List.of("SHOP_LEGACYPORT is deprecated: Use SHOP_PORT instead"),
+                r.warnings().stream().filter(w -> w.contains("deprecated")).toList());
+        assertFalse(r.warnings().toString().contains("7070"));
+    }
+
+    @Test
+    void valuesSpringWouldReadMoreLenientlyAreRejected() {
+        for (String[] c : new String[][] {{"SHOP_PORT", "0x10"}, {"SHOP_PORT", "#10"}, {"SHOP_PORT", "1e3"},
+                {"SHOP_TIMEOUT", "30s"}, {"SHOP_TIMEOUT", "pt30s"},
+                {"SHOP_ORIGINS", "https://a.example, https://b.example"},
+                {"SHOP_ORIGINS", "https://a.example,,https://b.example"}, {"SHOP_SHARDS", "1,0x2"}}) {
+            Map<String, String> before = new HashMap<>(env);
+            env.put(c[0], c[1]);
+            DocuconfTester.Result r = check();
+            assertEquals(List.of("invalid_type " + c[0]), r.codes(), c[0] + "=" + c[1] + ": " + r);
+            env.clear();
+            env.putAll(before);
+        }
+    }
+
+    @Test
     void paddedNumbersAreRejectedAsTheContractRejectsThem() {
         env.put("SHOP_PORT", " 8080");
         DocuconfTester.Result r = check();
