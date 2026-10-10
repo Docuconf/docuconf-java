@@ -82,7 +82,7 @@ service at startup instead of locking out the sender:
 ```text
 docuconf: 1 configuration problem:
 
-    [out_of_range] WEBHOOK_KEYS: key 1 is empty (a stray separator?)
+    [out_of_range] WEBHOOK_KEYS: key 2 is empty
 ```
 
 [`WebhooksTest`](src/test/java/dev/docuconf/examples/orders/WebhooksTest.java) walks through a rotation, and

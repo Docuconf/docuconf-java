@@ -192,7 +192,8 @@ public final class ContractFirst {
      * @param contractJson the contract
      * @param env the whole environment
      * @return values and violations
-     * @throws IllegalArgumentException if the contract is not valid
+     * @throws IllegalArgumentException if the contract is not valid, or declares {@code reload: watch}, which this
+     *     mode cannot keep
      */
     @SuppressWarnings("unchecked")
     public static Result load(String contractJson, Map<String, String> env) {
@@ -216,12 +217,19 @@ public final class ContractFirst {
      * @param contract the contract
      * @param env the whole environment
      * @return values and violations
-     * @throws IllegalArgumentException if the contract is not valid
+     * @throws IllegalArgumentException if the contract is not valid, or declares {@code reload: watch}, which this
+     *     mode cannot keep
      */
     public static Result load(Contract contract, Map<String, String> env) {
         DeclarationValidator.Result decl = DeclarationValidator.validate(contract);
         if (!decl.errors().isEmpty()) {
             throw new IllegalArgumentException("invalid contract: " + String.join("; ", decl.errors()));
+        }
+        List<String> watched = watchedInputs(contract);
+        if (!watched.isEmpty()) {
+            throw new IllegalArgumentException("contract-first mode reads each input once, so it cannot reload "
+                    + String.join(", ", watched) + " declared reload: watch (SPEC section 11.2 item 8); declare"
+                    + " reload: restart, or use the Spring Boot integration, which reloads watched inputs");
         }
         Map<String, Object> values = new LinkedHashMap<>();
         List<Violation> violations = new ArrayList<>();
@@ -239,6 +247,25 @@ public final class ContractFirst {
         }
         return new Result(Collections.unmodifiableMap(values), Collections.unmodifiableMap(files),
                 List.copyOf(violations), List.copyOf(warnings));
+    }
+
+    /**
+     * The file inputs and overlays a contract declares {@code reload: watch}. Contract-first mode returns values
+     * read once, so it rejects them at load rather than record a promise it does not keep (SPEC §11.2 item 8).
+     */
+    private static List<String> watchedInputs(Contract contract) {
+        List<String> out = new ArrayList<>();
+        for (FileSpec f : contract.files.values()) {
+            if ("watch".equals(f.reload)) {
+                out.add("file input " + f.name);
+            }
+        }
+        for (dev.docuconf.contract.OverlaySpec o : contract.overlays.values()) {
+            if ("watch".equals(o.reload)) {
+                out.add("overlay " + o.name);
+            }
+        }
+        return out;
     }
 
     /**
