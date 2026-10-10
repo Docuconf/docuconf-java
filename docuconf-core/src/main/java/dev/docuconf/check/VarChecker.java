@@ -166,7 +166,8 @@ public final class VarChecker {
             }
             case KEY_SET -> {
                 // SPEC §4.3: the number of keys is too_few_items/too_many_items; a key outside its lengths, and an
-                // empty key whatever the bounds, is out_of_range. Like every secret, no message holds a key.
+                // empty key whatever the bounds, is out_of_range. Like every secret, no message holds a key; a message
+                // names a key by its 1-based position as received, as in "key 2 is empty" for "old,".
                 List<?> keys = value instanceof dev.docuconf.KeySet ks ? ks.keys() : (List<?>) value;
                 if (keys.size() < v.minKeysOrDefault()) {
                     out.add(new Violation(Code.TOO_FEW_ITEMS, v.name,
@@ -178,18 +179,18 @@ public final class VarChecker {
                 }
                 for (int i = 0; i < keys.size(); i++) {
                     int len = length(String.valueOf(keys.get(i)));
+                    int n = i + 1;
                     if (len == 0) {
-                        out.add(new Violation(Code.OUT_OF_RANGE, v.name, "key " + i
-                                + " is empty (a stray separator?)"));
+                        out.add(new Violation(Code.OUT_OF_RANGE, v.name, "key " + n + " is empty"));
                         break;
                     }
                     if (v.keyMinLength != null && len < v.keyMinLength) {
-                        out.add(new Violation(Code.OUT_OF_RANGE, v.name, "key " + i + " is " + len
+                        out.add(new Violation(Code.OUT_OF_RANGE, v.name, "key " + n + " is " + len
                                 + " characters, below keyMinLength " + v.keyMinLength));
                         break;
                     }
                     if (v.keyMaxLength != null && len > v.keyMaxLength) {
-                        out.add(new Violation(Code.OUT_OF_RANGE, v.name, "key " + i + " is " + len
+                        out.add(new Violation(Code.OUT_OF_RANGE, v.name, "key " + n + " is " + len
                                 + " characters, above keyMaxLength " + v.keyMaxLength));
                         break;
                     }

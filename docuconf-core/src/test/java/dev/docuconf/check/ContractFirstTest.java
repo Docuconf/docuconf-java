@@ -59,8 +59,18 @@ class ContractFirstTest {
         assertEquals(List.of("old-key-1", "new-key-2"), keys.keys());
         assertEquals(List.of("OLD_PORT is deprecated: Use PORT instead; use PORT"), r.warnings());
 
+        // SPEC §4.3: an empty key is named by its 1-based position as received, and nothing else.
         r = ContractFirst.load(contract, Map.of("KEYS", "old-key-1,"));
-        assertEquals(List.of("[out_of_range] KEYS: key 1 is empty (a stray separator?)"),
+        assertEquals(List.of("[out_of_range] KEYS: key 2 is empty"),
+                r.violations().stream().map(Object::toString).toList());
+        r = ContractFirst.load(contract, Map.of("KEYS", ",new-key-2"));
+        assertEquals(List.of("[out_of_range] KEYS: key 1 is empty"),
+                r.violations().stream().map(Object::toString).toList());
+        r = ContractFirst.load(contract, Map.of("KEYS", "a-key-one,,b-key-two"));
+        assertTrue(r.violations().stream().map(Object::toString).toList()
+                .contains("[out_of_range] KEYS: key 2 is empty"), r.violations().toString());
+        r = ContractFirst.load(contract, Map.of("KEYS", "old-key-1,short"));
+        assertEquals(List.of("[out_of_range] KEYS: key 2 is 5 characters, below keyMinLength 8"),
                 r.violations().stream().map(Object::toString).toList());
     }
 
@@ -146,6 +156,18 @@ class ContractFirstTest {
                 () -> ContractFirst.load(bad, Map.of()));
         assertTrue(e.getMessage().contains("PORT: default"), e.getMessage());
         assertThrows(IllegalArgumentException.class, () -> ContractFirst.load("{\"kind\":\"Other\"}", Map.of()));
+    }
+
+    @Test
+    void rejectsReloadWatchItCannotKeep() {
+        // SPEC §11.2 item 8: contract-first mode reads each input once, so it refuses a watched input at load,
+        // naming it, rather than record reload: watch and never reload.
+        String watched = CONTRACT.replace("\"path\": \"/etc/orders/rules/rules.json\",",
+                "\"path\": \"/etc/orders/rules/rules.json\", \"reload\": \"watch\",");
+        assertTrue(watched.contains("\"reload\": \"watch\""), watched);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> ContractFirst.load(watched, Map.of()));
+        assertTrue(e.getMessage().contains("cannot reload file input rules declared reload: watch"), e.getMessage());
     }
 
     @Test

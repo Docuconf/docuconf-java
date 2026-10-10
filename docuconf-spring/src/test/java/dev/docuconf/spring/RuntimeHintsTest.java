@@ -70,7 +70,16 @@ class RuntimeHintsTest {
         env.put("SHOP_WEBHOOKKEYS", key + ",");
         DocuconfTester.Result r = check();
         assertEquals(List.of("out_of_range SHOP_WEBHOOKKEYS"), r.codes());
-        assertEquals("key 1 is empty (a stray separator?)", r.violations().get(0).message());
+        // SPEC §4.3: exactly "key N is empty", N 1-based as received.
+        assertEquals("key 2 is empty", r.violations().get(0).message());
+        env.put("SHOP_WEBHOOKKEYS", "," + key);
+        r = check();
+        assertEquals(List.of("out_of_range SHOP_WEBHOOKKEYS"), r.codes());
+        assertEquals("key 1 is empty", r.violations().get(0).message());
+        env.put("SHOP_WEBHOOKKEYS", key + ",," + key + "-new");
+        r = check();
+        assertTrue(r.violations().stream().anyMatch(v -> v.message().equals("key 2 is empty")), r.toString());
+        assertFalse(r.toString().contains(key), r.toString());
 
         env.put("SHOP_WEBHOOKKEYS", key + "," + key + "-new," + key + "-third");
         r = check();
@@ -79,7 +88,7 @@ class RuntimeHintsTest {
         env.put("SHOP_WEBHOOKKEYS", "short," + key);
         r = check();
         assertEquals(List.of("out_of_range SHOP_WEBHOOKKEYS"), r.codes());
-        assertEquals("key 0 is 5 characters, below keyMinLength 8", r.violations().get(0).message());
+        assertEquals("key 1 is 5 characters, below keyMinLength 8", r.violations().get(0).message());
         assertFalse(r.toString().contains(key), r.toString());
 
         env.put("SHOP_WEBHOOKKEYS", " " + key + "," + key);
@@ -109,6 +118,11 @@ class RuntimeHintsTest {
             env.clear();
             env.putAll(before);
         }
+        // SPEC §4.3: an empty item is "item N is empty", N 1-based.
+        env.put("SHOP_ORIGINS", "https://a.example,,https://b.example");
+        assertEquals("item 2 is empty", check().violations().get(0).message());
+        env.put("SHOP_ORIGINS", ",https://b.example");
+        assertEquals("item 1 is empty", check().violations().get(0).message());
     }
 
     @Test
@@ -166,5 +180,48 @@ class RuntimeHintsTest {
         assertTrue(restart.getMessage().contains("declare it with reload = Reload.WATCH"), restart.getMessage());
         assertThrows(IllegalArgumentException.class, () -> files.get("ratse", String.class));
         assertThrows(IllegalArgumentException.class, () -> files.onChange("rates", Integer.class, v -> { }));
+    }
+
+    @Test
+    void hooksRunAfterAnAcceptedReloadAndStatusCountsThem() {
+        DocuconfFiles files = new DocuconfFiles();
+        files.put("rates", tmp.resolve("rates.yaml"), "v1", "watch");
+        files.put("tls", tmp.resolve("tls"), null, "restart");
+        files.put("extra", tmp.resolve("extra.yaml"), null, "watch");
+        ReloadStatus boot = files.reloadStatus("rates");
+        assertEquals(new ReloadStatus(1, null, null), boot);
+        assertEquals(0, files.reloadStatus("extra").generation(), "an optional input absent at boot");
+        assertEquals(List.of("extra", "rates"), List.copyOf(files.reloadStatuses().keySet()));
+
+        List<String> seen = new java.util.ArrayList<>();
+        files.onChange("rates", String.class, v -> {
+            throw new IllegalStateException("hook failed on " + v);
+        });
+        DocuconfFiles.Subscription second = files.onChange("rates", String.class, seen::add);
+
+        // A rejected change: no hook runs, the value and generation stay, the codes are recorded.
+        java.time.Instant t1 = java.time.Instant.parse("2026-01-01T00:00:00Z");
+        files.rejected("rates", List.of("file_malformed"), t1);
+        assertEquals(List.of(), seen);
+        assertEquals("v1", files.get("rates", String.class).orElseThrow());
+        assertEquals(new ReloadStatus(1, null, new RejectedReload(t1, "rates", List.of("file_malformed"))),
+                files.reloadStatus("rates"));
+
+        // An accepted change: the throwing hook is logged and the next one still runs; the rejection is cleared.
+        java.time.Instant t2 = t1.plusSeconds(60);
+        assertEquals(2, files.update("rates", "v2", t2));
+        assertEquals(List.of("v2"), seen);
+        assertEquals("v2", files.get("rates", String.class).orElseThrow());
+        assertEquals(new ReloadStatus(2, t2, null), files.reloadStatus("rates"));
+
+        second.close();
+        second.close();
+        files.update("rates", "v3", t2.plusSeconds(1));
+        assertEquals(List.of("v2"), seen, "an unsubscribed hook is not called");
+        assertEquals(3, files.reloadStatus("rates").generation());
+
+        IllegalArgumentException restart = assertThrows(IllegalArgumentException.class,
+                () -> files.reloadStatus("tls"));
+        assertTrue(restart.getMessage().contains("declare it with reload = Reload.WATCH"), restart.getMessage());
     }
 }
