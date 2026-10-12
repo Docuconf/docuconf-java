@@ -36,7 +36,9 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.boot.context.properties.bind.BindContext;
@@ -78,10 +80,14 @@ public final class DocuconfChecker {
     /** The property source holding file input markers. */
     public static final String PROPERTY_SOURCE = "docuconfFiles";
 
+    /** SPEC §4.3's empty-item message, which quotes no value. */
+    private static final Pattern EMPTY_ITEM = Pattern.compile("item \\d+ is empty");
+
     private final ConfigurableEnvironment environment;
     private final List<ContractBundle> bundles;
     private final ClassLoader classLoader;
     private final Clock clock;
+    private final Map<String, Optional<String>> bootValues = new ConcurrentHashMap<>();
     private final DocuconfFiles files;
     private final Validator validator;
     private final List<ConversionService> conversion;
@@ -179,6 +185,7 @@ public final class DocuconfChecker {
     public List<Violation> check() {
         typoHints();
         strictProblems.clear();
+        bootValues.clear();
         normalizeEnvironment();
         List<Violation> out = new ArrayList<>(overlayProblems());
         Set<String> failed = new HashSet<>();
@@ -188,7 +195,7 @@ public final class DocuconfChecker {
             for (FileSpec f : bundle.contract().files.values()) {
                 Bindings.PropertyBinding b = bundle.bindings().files.get(f.name);
                 List<Violation> found = new ArrayList<>();
-                Path path = FileChecker.resolve(f, this::lookup);
+                Path path = FileChecker.resolve(f, this::bootLookup);
                 Object value = loadFile(f, b, path, found);
                 files.put(f.name, path, value, f.reload);
                 if (f.deprecated != null && (f.type == FileType.TLS ? Files.isDirectory(path) : Files.exists(path))) {
@@ -394,8 +401,10 @@ public final class DocuconfChecker {
                             changed.put(name, canonical);
                         }
                     } catch (WireFormat.WireException e) {
+                        // SPEC §4.3: "item N is empty" quotes no item, so not the list either.
+                        boolean quiet = v.secret || EMPTY_ITEM.matcher(e.getMessage()).matches();
                         strictProblems.putIfAbsent(v.name, new Violation(e.code(), v.name, e.getMessage()
-                                + (v.secret ? "" : " (got " + quote(raw) + ")")
+                                + (quiet ? "" : " (got " + quote(raw) + ")")
                                 + (name.equals(v.name) ? "" : " (set as " + name + ")")));
                     }
                 }
@@ -471,11 +480,15 @@ public final class DocuconfChecker {
                             throw new WireFormat.WireException(Code.INVALID_TYPE, "item " + i + " is not an integer");
                         }
                         out.add(new java.math.BigInteger(item.startsWith("+") ? item.substring(1) : item).toString());
-                    } else if (item.isEmpty() || !item.equals(item.strip())) {
-                        // Spring trims list items and drops empty ones; SPEC section 5 never trims.
-                        throw new WireFormat.WireException(Code.INVALID_TYPE, "item " + i + (item.isEmpty()
-                                ? " is empty, and Spring would drop it" : " has leading or trailing whitespace, which"
-                                + " Spring would trim") + "; list items are never trimmed (SPEC section 5)");
+                    } else if (item.isEmpty()) {
+                        // Spring drops empty list items; SPEC section 5 keeps them. SPEC section 4.3 words this
+                        // message exactly, with the item's 1-based position.
+                        throw new WireFormat.WireException(Code.INVALID_TYPE, "item " + (i + 1) + " is empty");
+                    } else if (!item.equals(item.strip())) {
+                        // Spring trims list items; SPEC section 5 never trims.
+                        throw new WireFormat.WireException(Code.INVALID_TYPE, "item " + i + " has leading or"
+                                + " trailing whitespace, which Spring would trim; list items are never trimmed (SPEC"
+                                + " section 5)");
                     } else {
                         out.add(item);
                     }
@@ -499,7 +512,9 @@ public final class DocuconfChecker {
         for (ContractBundle bundle : bundles) {
             FileSpec f = bundle.contract().files.get(input);
             if (f != null) {
-                Path path = FileChecker.resolve(f, this::lookup);
+                // The path variable and a keystore's password are read as they were at startup: a process's
+                // environment does not change, so rotating a keystore password needs a rollout (SPEC §4.6.2).
+                Path path = FileChecker.resolve(f, this::bootLookup);
                 return loadFile(f, bundle.bindings().files.get(input), path, violations);
             }
         }
@@ -520,7 +535,7 @@ public final class DocuconfChecker {
     }
 
     private Object loadFile(FileSpec f, Bindings.PropertyBinding b, Path path, List<Violation> out) {
-        FileChecker.Outcome o = FileChecker.check(f, path, clock.instant(), this::lookup);
+        FileChecker.Outcome o = FileChecker.check(f, path, clock.instant(), this::bootLookup);
         out.addAll(o.violations());
         if (!o.violations().isEmpty() || o.value() == null) {
             return null;
@@ -962,6 +977,15 @@ public final class DocuconfChecker {
     // -------------------------------------------------------------------------------------------------------------
 
     /** Looks a variable up: through its configuration key when it is a contract variable, else as is. */
+    /**
+     * A variable a file input depends on (its path variable, a keystore's password), as it was the first time the
+     * startup check read it, so a reload re-opens a keystore with the password read at boot even if a watched
+     * overlay changed the property since.
+     */
+    private String bootLookup(String name) {
+        return bootValues.computeIfAbsent(name, n -> Optional.ofNullable(lookup(n))).orElse(null);
+    }
+
     private String lookup(String name) {
         for (ContractBundle bundle : bundles) {
             Bindings.PropertyBinding b = bundle.bindings().vars.get(name);

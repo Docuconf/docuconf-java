@@ -83,7 +83,8 @@ public record ShopProperties(
         @NotNull @ConfigFile(value = "/etc/shop/routes/routes.yaml", reload = Reload.WATCH) Routes routes,
         @TextFile(value = "/etc/shop/license/license.key", pattern = "^[A-Z]{4}\\n?$") String license,
         @Secret String keystorePassword,
-        @KeystoreFile(value = "/etc/shop/partner/keystore.p12", passwordProperty = "keystorePassword")
+        @KeystoreFile(value = "/etc/shop/partner/keystore.p12", passwordProperty = "keystorePassword",
+                reload = Reload.WATCH)
         Keystore partner,
         @CaBundleFile(value = "/etc/shop/ca/bundle.pem", pathEnv = "SHOP_CA_FILE") CaBundle trusted,
         @BinaryFile("/data/geo/db.mmdb") Path geo,

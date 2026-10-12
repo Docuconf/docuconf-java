@@ -515,10 +515,97 @@ finds it either way. Prefer the exported `contract.cue` from step 6.
   `jackson-dataformat-toml` for config files in those formats. If one is missing, startup says which.
 
 File inputs reach your properties object when it is bound. For `reload = WATCH` inputs, docuconf watches the mount
-directory (Kubernetes swaps a `..data` symlink there), re-checks the input after a change and publishes it only if
-it passes. Your bean keeps the startup value; read the live one from `DocuconfFiles`, for example
-`files.onChange("rates", Rates.class, pricing::update)`. An unknown input name, or a listener on an input that is
-not watched, throws and names the inputs there are.
+directory in the background (Kubernetes swaps a `..data` symlink there). After a change it compares a hash of the
+input's files with the content it last checked, re-checks a changed input exactly as at startup, and swaps in the new
+value only if it passes. A change that fails is logged by violation and not used: the previous value stays. Your
+bean keeps the startup value; read the live one from `DocuconfFiles`. An unknown input name, or a hook or status on
+an input that is not watched, throws and names the inputs there are.
+
+### Using a watched value
+
+An object built once from a watched value (an `SSLContext`, an HTTP client, a connection pool) keeps the old value
+until you rebuild it, so a renewed certificate is mounted but never served. Either read the value on every use, or
+rebuild the object when it changes. docuconf tells you, after an accepted change and never after a rejected one, in
+two ways that fire from its watcher thread, without the app reading the value:
+
+- a `DocuconfFileReloadedEvent`, for `@EventListener` methods and `ApplicationListener` beans, with `getInput()`,
+  `getValue()` (or `getValue(Class)`) and `getGeneration()`;
+- `DocuconfFiles.onChange(input, type, hook)`, which returns a `DocuconfFiles.Subscription`; `close()` it to
+  unregister.
+
+Several hooks and listeners may watch one input. One that throws is logged, by input name and exception type only,
+and neither stops the others nor undoes the reload.
+
+A TLS server that asks for its context on each new connection:
+
+```java
+@Component
+class ServerTls {
+    private final AtomicReference<SSLContext> context = new AtomicReference<>();
+
+    ServerTls(OrdersProperties props) throws GeneralSecurityException {
+        context.set(props.tls().sslContext());
+    }
+
+    @EventListener(condition = "#event.input == 'tls'")
+    void renewed(DocuconfFileReloadedEvent event) throws GeneralSecurityException {
+        context.set(event.getValue(TlsKeyPair.class).sslContext());
+    }
+
+    SSLContext current() { // call on each accept, never cache the result
+        return context.get();
+    }
+}
+```
+
+An HTTP client that trusts a watched CA bundle, rebuilt when the bundle changes:
+
+```java
+@Component
+class Upstream {
+    private final AtomicReference<HttpClient> client = new AtomicReference<>();
+
+    Upstream(DocuconfFiles files) {
+        CaBundle ca = files.get("upstreamCa", CaBundle.class).orElseThrow();
+        client.set(build(ca));
+        files.onChange("upstreamCa", CaBundle.class, next -> client.set(build(next)));
+    }
+
+    private static HttpClient build(CaBundle ca) {
+        try {
+            SSLContext ssl = SSLContext.getInstance("TLS");
+            ssl.init(null, ca.trustManagerFactory().getTrustManagers(), null);
+            return HttpClient.newBuilder().sslContext(ssl).build();
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    HttpClient client() { // per request
+        return client.get();
+    }
+}
+```
+
+`TlsKeyPair`, `CaBundle` and `Keystore` read their files on each call, so calling them on each use also sees a
+rotation, but before docuconf has checked it; rebuild in a hook or listener to use only content that passed.
+
+**Reload status.** `files.reloadStatus("tls")` returns a `ReloadStatus`: `generation()` is 1 after boot (0 for an
+optional input absent at boot) plus one per accepted reload, `lastReload()` is the time of the last accepted reload
+(`null` before the first), and `lastRejected()` is the last change that failed its checks, as a `RejectedReload`
+with `time()`, `input()` and `codes()` (such as `[certificate_expiring]`), never content, or `null`. An accepted
+reload clears it. `files.reloadStatuses()` returns every watched input's status, by name, for a health endpoint or a
+metric:
+
+```java
+ReloadStatus tls = files.reloadStatus("tls");
+Map<String, ReloadStatus> all = files.reloadStatuses(); // for a health endpoint
+```
+
+**Keystore passwords.** A reload re-opens a watched keystore with the password read at startup, since a process's
+environment does not change. Rotating a keystore's password therefore needs a rollout, which also delivers the new
+keystore. A changed keystore that does not open with the startup password is rejected as `keystore_unreadable`, and
+the previous one stays.
 
 ## Platform overlays
 
@@ -571,7 +658,10 @@ and the parsed JSON of `json` variables. It also reads the contract's file input
 JSON, YAML and TOML as data, text files as text, TLS key pairs, CA bundles and PKCS#12 keystores checked), profiles
 and config-file overlays, in the order default, profile, overlay, environment, all under `DOCUCONF_FILE_ROOT`. YAML
 and TOML are read with Jackson's YAML or TOML module, found at run time (Jackson 3, else Jackson 2), so
-`docuconf-core` keeps no dependency. A deprecated variable that is set loads, with a warning in `r.warnings()`.
+`docuconf-core` keeps no dependency. A deprecated variable that is set loads, with a warning in `r.warnings()`. The
+values are read once, so a contract that declares `reload: watch` for a file input or an overlay is rejected at load
+with an `IllegalArgumentException` naming each one (SPEC section 11.2 item 8); declare `reload: restart`, or use the
+Spring Boot integration, which reloads watched inputs.
 
 ## Conformance
 

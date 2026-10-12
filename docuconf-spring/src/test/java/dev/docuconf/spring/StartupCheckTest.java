@@ -5,25 +5,33 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.docuconf.Keystore;
 import dev.docuconf.check.Violation;
+import dev.docuconf.spring.fixture.ReloadRecorder;
 import dev.docuconf.spring.fixture.ShopProperties;
 import dev.docuconf.testing.TestCerts;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.diagnostics.FailureAnalysis;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 
 class StartupCheckTest {
 
@@ -337,6 +345,66 @@ class StartupCheckTest {
             assertTrue(changed.await(20, TimeUnit.SECONDS), "no reload");
             ShopProperties.Routes routes = assertInstanceOf(ShopProperties.Routes.class, latest.get());
             assertEquals("/v2", routes.routes().get(0).match());
+        }
+    }
+
+    @Test
+    void aWatchedKeystoreReloadsWithTheBootPasswordAndReportsItsStatus() throws Exception {
+        try (ConfigurableApplicationContext ctx = shop.run()) {
+            DocuconfFiles files = ctx.getBean(DocuconfFiles.class);
+            ReloadRecorder recorder = ctx.getBean(ReloadRecorder.class);
+            assertEquals(new ReloadStatus(1, null, null), files.reloadStatus("partner"));
+            Keystore before = files.get("partner", Keystore.class).orElseThrow();
+            List<Keystore> hooked = new CopyOnWriteArrayList<>();
+            files.onChange("partner", Keystore.class, k -> {
+                throw new IllegalStateException("hook failed");
+            });
+            files.onChange("partner", Keystore.class, hooked::add);
+
+            // A property changed after startup, as a watched overlay could, is not the password a reload uses: the
+            // process's environment does not change, so a reload re-opens the keystore with the boot password.
+            String newPassword = "new-pa55word";
+            ctx.getEnvironment().getPropertySources().addFirst(new MapPropertySource("later",
+                    Map.of("SHOP_KEYSTOREPASSWORD", newPassword, "shop.keystore-password", newPassword)));
+            shop.write("etc/shop/partner/keystore.p12",
+                    TestCerts.keystore("PKCS12", TestCerts.selfSigned(TestCerts.rsa(), 30), newPassword));
+            ReloadStatus rejected = awaitStatus(files, "partner", s -> s.lastRejected() != null);
+            assertEquals(1, rejected.generation());
+            assertNull(rejected.lastReload());
+            assertEquals("partner", rejected.lastRejected().input());
+            assertEquals(List.of("keystore_unreadable"), rejected.lastRejected().codes());
+            assertSame(before, files.get("partner", Keystore.class).orElseThrow(), "the previous value is kept");
+            assertEquals(List.of(), hooked, "no hook runs for a rejected change");
+            assertEquals(List.of(), recorder.events, "no event for a rejected change");
+
+            // A new keystore with the boot password is accepted: the throwing hook and the throwing listener are
+            // logged, and the others still run.
+            shop.write("etc/shop/partner/keystore.p12", TestCerts.keystore("PKCS12",
+                    TestCerts.selfSigned(TestCerts.rsa(), 60), ShopFixture.KS_PASSWORD));
+            ReloadStatus accepted = awaitStatus(files, "partner", s -> s.generation() == 2);
+            assertNull(accepted.lastRejected(), "an accepted reload clears the rejection");
+            assertNotNull(accepted.lastReload());
+            assertEquals(1, hooked.size());
+            assertSame(hooked.get(0), files.get("partner", Keystore.class).orElseThrow());
+            assertNotNull(hooked.get(0).load(ShopFixture.KS_PASSWORD.toCharArray()));
+            awaitTrue(() -> recorder.events.size() == 1);
+            assertEquals("partner", recorder.events.get(0).getInput());
+            assertEquals(2, recorder.events.get(0).getGeneration());
+            assertSame(hooked.get(0), recorder.events.get(0).getValue(Keystore.class));
+        }
+    }
+
+    private static ReloadStatus awaitStatus(DocuconfFiles files, String input, Predicate<ReloadStatus> done)
+            throws InterruptedException {
+        awaitTrue(() -> done.test(files.reloadStatus(input)));
+        return files.reloadStatus(input);
+    }
+
+    private static void awaitTrue(BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (!condition.getAsBoolean()) {
+            assertTrue(System.nanoTime() < deadline, "timed out waiting for the reload");
+            Thread.sleep(50);
         }
     }
 
