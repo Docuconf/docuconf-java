@@ -28,7 +28,7 @@ exactly as this README says. CI builds it, runs these commands and compiles ever
 
 ## 1. Install
 
-Build the SDK and install `0.1.0-SNAPSHOT` into your local Maven repository (`~/.m2`), with Java 17+ and Maven: <!-- x-release-please-version -->
+Build the SDK and install `0.2.0` into your local Maven repository (`~/.m2`), with Java 17+ and Maven: <!-- x-release-please-version -->
 
 ```sh
 git clone https://github.com/docuconf/docuconf-java.git
@@ -49,7 +49,7 @@ Import the BOM, then add the runtime and Bean Validation:
     <dependency>
       <groupId>dev.docuconf</groupId>
       <artifactId>docuconf-bom</artifactId>
-      <version>0.1.0-SNAPSHOT</version>
+      <version>0.2.0</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -112,7 +112,7 @@ committed copy in `mvn verify` (see step 6):
 <plugin>
   <groupId>dev.docuconf</groupId>
   <artifactId>docuconf-maven-plugin</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.2.0</version>
   <executions>
     <execution>
       <goals>
@@ -141,12 +141,12 @@ repositories {
 <!-- x-release-please-start-version -->
 ```kotlin
 dependencies {
-    implementation(platform("dev.docuconf:docuconf-bom:0.1.0-SNAPSHOT"))
+    implementation(platform("dev.docuconf:docuconf-bom:0.2.0"))
     implementation(platform("org.springframework.boot:spring-boot-dependencies:$springBootVersion"))
     implementation("dev.docuconf:docuconf-spring")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
-    annotationProcessor(platform("dev.docuconf:docuconf-bom:0.1.0-SNAPSHOT"))
+    annotationProcessor(platform("dev.docuconf:docuconf-bom:0.2.0"))
     annotationProcessor(platform("org.springframework.boot:spring-boot-dependencies:$springBootVersion"))
     annotationProcessor("dev.docuconf:docuconf-processor")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
