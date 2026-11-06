@@ -34,7 +34,7 @@ jobs:
     env:
       MAVEN_ARGS: -B -ntp
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The contract meta-schema (spec/cue) and the conformance suite (conformance/cases.json) live in docuconf-go.
       - name: Pick the docuconf-go ref
@@ -47,19 +47,19 @@ jobs:
           elif [ -n "$INPUT_REF" ]; then echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
           else echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"; fi
       - name: Check out docuconf-go
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: docuconf/docuconf-go
           path: docuconf-go
           ref: ${{ steps.dcref.outputs.ref }}
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: maven
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
           cache: false
@@ -132,7 +132,7 @@ jobs:
       - name: "Example: smoke test"
         run: examples/orders/smoke.sh
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: "8.14.3"
 
