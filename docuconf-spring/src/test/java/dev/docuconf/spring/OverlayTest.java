@@ -146,7 +146,10 @@ class OverlayTest {
         assertEquals(List.of("file_malformed platform", "missing_required SHOP_DATABASEURL"), codes(e));
         Violation v = e.getViolations().stream().filter(x -> x.input().equals("platform")).findFirst().orElseThrow();
         assertTrue(v.message().contains("is not valid YAML"), v.message());
-        assertFalse(v.message().contains("9091"), v.message());
+        // The overlay's content never reaches the message. Its path does, and
+        // the temporary directory's random name can hold any digits, 9091
+        // among them, so the path is left out of the check.
+        assertFalse(v.message().replace(tmp.toString(), "").contains("9091"), v.message());
     }
 
     @Test
