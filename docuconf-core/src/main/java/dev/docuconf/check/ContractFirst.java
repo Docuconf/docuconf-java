@@ -7,6 +7,7 @@ import dev.docuconf.contract.FileSpec;
 import dev.docuconf.contract.FileType;
 import dev.docuconf.contract.GoDuration;
 import dev.docuconf.contract.Json;
+import dev.docuconf.contract.RequiredIf;
 import dev.docuconf.contract.VarSpec;
 import dev.docuconf.contract.VarType;
 import java.io.IOException;
@@ -37,6 +38,11 @@ import java.util.function.Function;
  * variable's default, the selected profile's default (SPEC §4.4), a config-file overlay, then the environment. File
  * inputs (SPEC §4.6) and overlays are read under {@code DOCUCONF_FILE_ROOT}. Constraints are checked by {@link VarChecker}, the same code
  * that checks declared defaults at compile time and Spring-bound values at startup.
+ *
+ * <p>An input with {@code requiredIf} (SPEC §4.2.1) is required while its condition variable's loaded value (from
+ * any of those layers) is the condition's value. With {@code roles} (SPEC §4.9), {@code DOCUCONF_ROLE} names the
+ * workload's role, and an input whose roles leave it out is optional; with no valid role, only the inputs every role
+ * uses are required. {@code includes} (SPEC §4.8) is read for provenance: the fragments' variables are inline.
  *
  * <p>Typed values: {@code String} for string, url and enum; {@code Long} for int; {@code BigDecimal} for float;
  * {@code Boolean}; {@link Duration}; a {@code List} of {@code String} or {@code Long}; a
@@ -236,17 +242,50 @@ public final class ContractFirst {
         List<String> warnings = new ArrayList<>();
         Map<String, Object> profile = profileDefaults(contract, env);
         Map<String, Overlays.Value> overlay = Overlays.load(contract, env::get, violations, warnings);
+        // Roles (SPEC §4.9): an input that only other roles use is optional here. With no role, or one the contract
+        // does not declare, every role-specific input is optional, so the role is the one problem reported.
+        String named = env.get(DeclarationValidator.ROLE_VAR);
+        String role = named != null && contract.roles != null && contract.roles.contains(named) ? named : null;
         for (VarSpec v : contract.vars.values()) {
-            values.put(v.name, var(v, env, profile, overlay.get(v.name), violations, warnings));
+            boolean required = v.required && inRole(v.roles, role);
+            values.put(v.name, var(v, required, env, profile, overlay.get(v.name), violations, warnings));
+        }
+        // Conditional requirements (SPEC §4.2.1), on the condition variables' loaded values: the environment, an
+        // overlay, the selected profile or the default. A condition variable with a violation has no value, so it
+        // makes nothing required.
+        Set<String> reported = new java.util.HashSet<>();
+        violations.forEach(x -> reported.add(x.input()));
+        for (VarSpec v : contract.vars.values()) {
+            String when = requiredWhen(v.requiredIf, v.roles, role, values);
+            if (when != null && values.get(v.name) == null && !reported.contains(v.name)) {
+                violations.add(new Violation(Code.MISSING_REQUIRED, v.name, "is required when " + when));
+            }
         }
         warnings.addAll(typoHints(contract, env));
         Map<String, Object> files = new LinkedHashMap<>();
         Instant now = Instant.now();
         for (FileSpec f : contract.files.values()) {
-            files.put(f.name, file(f, env::get, now, violations, warnings));
+            String when = requiredWhen(f.requiredIf, f.roles, role, values);
+            boolean required = inRole(f.roles, role) && (f.required || when != null);
+            files.put(f.name, file(f, required, when, env::get, now, violations, warnings));
         }
         return new Result(Collections.unmodifiableMap(values), Collections.unmodifiableMap(files),
                 List.copyOf(violations), List.copyOf(warnings));
+    }
+
+    /** Whether an input with these roles is used by the workload's role; every role uses one without roles. */
+    private static boolean inRole(List<String> roles, String role) {
+        return roles == null || role != null && roles.contains(role);
+    }
+
+    /**
+     * The condition that makes an input required at this boot, such as {@code TLS_ENABLED is true}, or
+     * {@code null} when it has none, the condition does not hold, or the role does not use the input.
+     */
+    private static String requiredWhen(RequiredIf condition, List<String> roles, String role,
+            Map<String, Object> values) {
+        return condition != null && inRole(roles, role) && condition.holdsFor(values.get(condition.var()))
+                ? condition.toString() : null;
     }
 
     /**
@@ -330,7 +369,12 @@ public final class ContractFirst {
         return defaults == null ? Map.of() : defaults;
     }
 
-    private static Object var(VarSpec v, Map<String, String> env, Map<String, Object> profile,
+    /**
+     * One variable's value.
+     *
+     * @param required whether it is required at this boot: declared required, and used by the workload's role
+     */
+    private static Object var(VarSpec v, boolean required, Map<String, String> env, Map<String, Object> profile,
             Overlays.Value overlay, List<Violation> out, List<String> warnings) {
         boolean indexed = (v.type == VarType.LIST || v.type == VarType.KEY_SET) && "indexed".equals(v.encoding);
         String raw = null;
@@ -353,7 +397,7 @@ public final class ContractFirst {
             if (profile.containsKey(v.name)) {
                 return fromContract(v, profile.get(v.name));
             }
-            if (v.required) {
+            if (required) {
                 out.add(new Violation(Code.MISSING_REQUIRED, v.name, "is required but not set"));
                 return null;
             }
@@ -582,10 +626,10 @@ public final class ContractFirst {
         };
     }
 
-    private static Object file(FileSpec f, Function<String, String> env, Instant now, List<Violation> out,
-            List<String> warnings) {
+    private static Object file(FileSpec f, boolean required, String requiredWhen, Function<String, String> env,
+            Instant now, List<Violation> out, List<String> warnings) {
         Path path = FileChecker.resolve(f, env);
-        FileChecker.Outcome o = FileChecker.check(f, path, now, env);
+        FileChecker.Outcome o = FileChecker.check(f, required, requiredWhen, path, now, env);
         out.addAll(o.violations());
         if (o.present() && f.deprecated != null) {
             warnings.add(deprecationMessage(f.name, f.deprecated));

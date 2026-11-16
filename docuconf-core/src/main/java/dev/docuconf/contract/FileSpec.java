@@ -25,6 +25,10 @@ public final class FileSpec {
     public String group;
     /** Deprecation, if any. */
     public Deprecation deprecated;
+    /** The condition that makes it required (SPEC §4.2.1), or {@code null}. */
+    public RequiredIf requiredIf;
+    /** The roles that use it (SPEC §4.9); {@code null} when every role does. */
+    public List<String> roles;
     /** Where the app reads it: a directory for TLS, a file otherwise. */
     public String path;
     /** A variable the platform sets to {@link #path}. */

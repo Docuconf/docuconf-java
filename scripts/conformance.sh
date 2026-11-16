@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs only the docuconf-go-facing tests against a given docuconf-go checkout:
 # the shared conformance suite (ConformanceTest), which runs every case and
-# fails if any is skipped; the shared export check (ExportConformanceTest),
+# fails if any is skipped, then cases.pending.json next to it, where a case
+# with an unknown tag is skipped; the shared export check (ExportConformanceTest),
 # which runs `docuconf conformance export` on the export fixture; and the
 # tests that `cue vet` exported contracts against its meta-schema
 # (ContractCoreTest, DocuconfProcessorTest, GoldenContractTest, OverlayTest).

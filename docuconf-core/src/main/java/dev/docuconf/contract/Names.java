@@ -15,6 +15,12 @@ public final class Names {
     /** Service names. */
     public static final Pattern SERVICE_NAME = Pattern.compile("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$");
 
+    /** Role names (SPEC §4.9): DNS labels. */
+    public static final Pattern ROLE_NAME = SERVICE_NAME;
+
+    /** Well-known fragment references, {@code name@major} (SPEC §4.8), such as {@code otel@1}. */
+    public static final Pattern FRAGMENT_REF = Pattern.compile("^[a-z][a-z0-9-]*@[1-9][0-9]*$");
+
     /** Names that look like feature flags (SPEC §10). */
     public static final Pattern FEATURE_FLAG = Pattern.compile("^(FF|FEATURE|FEATURE_FLAG|ENABLE)_");
 

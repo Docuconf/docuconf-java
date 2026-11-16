@@ -12,7 +12,8 @@ import java.util.Set;
 /**
  * Checks a declaration before it is exported (SPEC §11.2 item 2): names, descriptions, defaults against their
  * own constraints, required without default, secrets without defaults, RE2-only patterns, file mount rules and
- * profile values. The same rules the CUE meta-schema enforces, reported with the input's name.
+ * profile values, {@code requiredIf} conditions (SPEC §4.2.1) and roles (SPEC §4.9). The same rules the CUE
+ * meta-schema enforces, reported with the input's name.
  */
 public final class DeclarationValidator {
 
@@ -50,6 +51,7 @@ public final class DeclarationValidator {
     }
 
     private void run(Contract c) {
+        errors.addAll(c.readErrors);
         if (c.name == null || !Names.SERVICE_NAME.matcher(c.name).matches()) {
             errors.add("service name \"" + c.name + "\" must be a DNS label ([a-z0-9-], at most 63 characters)");
         }
@@ -67,6 +69,85 @@ public final class DeclarationValidator {
         if (c.profiles != null) {
             profiles(c);
         }
+        roles(c);
+        for (VarSpec v : c.vars.values()) {
+            condition(c, v.name, v.requiredIf, v.required, v.defaultValue != null);
+        }
+        for (FileSpec f : c.files.values()) {
+            condition(c, f.name, f.requiredIf, f.required, false);
+        }
+    }
+
+    /** The variable that names a workload's role (SPEC §4.9). */
+    public static final String ROLE_VAR = "DOCUCONF_ROLE";
+
+    /**
+     * SPEC §4.9: an input's roles are among the contract's, and a contract with roles declares {@link #ROLE_VAR} as
+     * a required enum whose values are exactly the roles, used by every role.
+     */
+    private void roles(Contract c) {
+        Map<String, List<String>> used = new java.util.LinkedHashMap<>();
+        c.vars.values().forEach(v -> used.put(v.name, v.roles));
+        c.files.values().forEach(f -> used.put(f.name, f.roles));
+        for (Map.Entry<String, List<String>> e : used.entrySet()) {
+            if (e.getValue() == null) {
+                continue;
+            }
+            if (c.roles == null) {
+                errors.add(e.getKey() + ": has roles, but the contract declares none");
+                continue;
+            }
+            for (String r : e.getValue()) {
+                if (!c.roles.contains(r)) {
+                    errors.add(e.getKey() + ": role " + r + " is not one of the contract's roles, "
+                            + String.join(", ", c.roles));
+                }
+            }
+        }
+        if (c.roles == null) {
+            return;
+        }
+        VarSpec role = c.vars.get(ROLE_VAR);
+        if (role == null || role.type != VarType.ENUM || !role.required || role.roles != null
+                || !c.roles.equals(role.values)) {
+            errors.add(ROLE_VAR + ": a contract with roles declares it as a required enum whose values are the roles, "
+                    + String.join(", ", c.roles) + ", used by every role");
+        }
+    }
+
+    /**
+     * SPEC §4.2.1: a condition names another declared variable, a plain string, int, bool or enum one, with a value
+     * it can have; the input is optional, with no default (and not deprecated, which {@link #deprecated} checks).
+     */
+    private void condition(Contract c, String n, RequiredIf condition, boolean required, boolean hasDefault) {
+        if (condition == null) {
+            return;
+        }
+        if (required || hasDefault) {
+            errors.add(n + ": an input with requiredIf is neither required nor has a default");
+        }
+        VarSpec on = c.vars.get(condition.var());
+        if (on == null || condition.var().equals(n)) {
+            errors.add(n + ": requiredIf must name another declared variable, not " + condition.var());
+            return;
+        }
+        if (on.secret || !(on.type == VarType.STRING || on.type == VarType.INT || on.type == VarType.BOOL
+                || on.type == VarType.ENUM)) {
+            errors.add(n + ": requiredIf names " + on.name + ", which is not a plain string, int, bool or enum"
+                    + " variable");
+            return;
+        }
+        Object value = condition.value();
+        boolean sameType = switch (on.type) {
+            case INT -> value instanceof Long;
+            case BOOL -> value instanceof Boolean;
+            default -> value instanceof String;
+        };
+        List<Violation> problems = sameType ? VarChecker.check(on, value) : List.of();
+        if (!sameType || !problems.isEmpty()) {
+            errors.add(n + ": requiredIf: " + condition + " is not a value " + on.name + " can have"
+                    + (problems.isEmpty() ? "" : ": " + problems.get(0).message()));
+        }
     }
 
     private void var(VarSpec v) {
@@ -80,7 +161,7 @@ public final class DeclarationValidator {
         }
         description(n, v.description);
         details(n, v.details);
-        deprecated(n, v.deprecated, v.required);
+        deprecated(n, v.deprecated, v.required, v.requiredIf != null);
         if (v.type == VarType.KEY_SET) {
             keySet(v);
         }
@@ -165,9 +246,10 @@ public final class DeclarationValidator {
 
     /**
      * SPEC section 4.2: a deprecation message is not blank and at most {@link #MAX_DEPRECATION_MESSAGE}
-     * characters, and a required input cannot be deprecated, since the platform could not stop setting it.
+     * characters, and a required input cannot be deprecated, since the platform could not stop setting it; nor can
+     * one with {@code requiredIf} (SPEC section 4.2.1).
      */
-    private void deprecated(String n, Deprecation d, boolean required) {
+    private void deprecated(String n, Deprecation d, boolean required, boolean conditional) {
         if (d == null) {
             return;
         }
@@ -178,6 +260,10 @@ public final class DeclarationValidator {
         if (required) {
             errors.add(n + ": a required input cannot be deprecated, since the platform could not stop setting it;"
                     + " make it optional first");
+        }
+        if (conditional) {
+            errors.add(n + ": an input with requiredIf cannot be deprecated, since the platform could not stop"
+                    + " setting it; remove requiredIf first");
         }
         if (d.replacedBy() != null && d.replacedBy().isBlank()) {
             errors.add(n + ": deprecated replacedBy must name an input");
@@ -324,7 +410,7 @@ public final class DeclarationValidator {
         }
         description(n, f.description);
         details(n, f.details);
-        deprecated(n, f.deprecated, f.required);
+        deprecated(n, f.deprecated, f.required, f.requiredIf != null);
         if (f.path == null || !ABS_PATH.matcher(f.path).matches() || f.path.contains("//") || f.path.endsWith("/")
                 || f.path.matches(".*(^|/)\\.\\.?(/|$).*")) {
             errors.add(n + ": path " + f.path + " must be absolute and normalised");

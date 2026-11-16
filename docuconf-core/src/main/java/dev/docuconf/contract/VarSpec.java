@@ -34,6 +34,10 @@ public final class VarSpec {
     public String configKey;
     /** Deprecation, if any. */
     public Deprecation deprecated;
+    /** The condition that makes it required (SPEC §4.2.1), or {@code null}. */
+    public RequiredIf requiredIf;
+    /** The roles that use it (SPEC §4.9); {@code null} when every role does. */
+    public List<String> roles;
     /** The default value, or {@code null}. */
     public Object defaultValue;
     /** String: least length. */

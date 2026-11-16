@@ -70,6 +70,8 @@ public final class ContractJson {
         gen.put("version", c.sdkVersion);
         meta.put("generator", gen);
         m.put("metadata", meta);
+        put(m, "includes", c.includes);
+        put(m, "roles", c.roles);
         Map<String, Object> vars = new LinkedHashMap<>();
         for (VarSpec v : c.vars.values()) {
             vars.put(v.name, varMap(v));
@@ -122,6 +124,8 @@ public final class ContractJson {
         put(m, "configKey", v.configKey);
         put(m, "examples", v.examples);
         deprecated(m, v.deprecated);
+        requiredIf(m, v.requiredIf);
+        put(m, "roles", v.roles);
         put(m, "minLength", v.minLength);
         put(m, "maxLength", v.maxLength);
         put(m, "pattern", v.pattern);
@@ -169,6 +173,8 @@ public final class ContractJson {
         }
         put(m, "maxSize", f.maxSize);
         deprecated(m, f.deprecated);
+        requiredIf(m, f.requiredIf);
+        put(m, "roles", f.roles);
         put(m, "schema", f.schema);
         put(m, "dnsNames", f.dnsNames);
         put(m, "keyAlgorithms", f.keyAlgorithms);
@@ -192,6 +198,14 @@ public final class ContractJson {
             dm.put("message", d.message());
             put(dm, "replacedBy", d.replacedBy());
             m.put("deprecated", dm);
+        }
+    }
+
+    private static void requiredIf(Map<String, Object> m, RequiredIf r) {
+        if (r != null) {
+            Map<String, Object> rm = new LinkedHashMap<>();
+            rm.put(r.var(), r.value());
+            m.put("requiredIf", rm);
         }
     }
 
@@ -279,6 +293,8 @@ public final class ContractJson {
         Map<String, Object> gen = (Map<String, Object>) meta.getOrDefault("generator", Map.of());
         c.sdk = (String) gen.getOrDefault("sdk", c.sdk);
         c.sdkVersion = (String) gen.getOrDefault("version", c.sdkVersion);
+        includes(m.get("includes"), c);
+        c.roles = roles("roles", m.get("roles"), c.readErrors);
         Map<String, Object> vars = (Map<String, Object>) m.getOrDefault("vars", Map.of());
         vars.forEach((name, o) -> {
             Map<String, Object> vm = (Map<String, Object>) o;
@@ -290,6 +306,8 @@ public final class ContractJson {
             v.configKey = (String) vm.get("configKey");
             v.examples = (List<String>) vm.get("examples");
             v.deprecated = deprecation(vm.get("deprecated"));
+            v.requiredIf = requiredIf(name, vm.get("requiredIf"), c.readErrors);
+            v.roles = roles(name, vm.get("roles"), c.readErrors);
             v.minLength = integer(vm.get("minLength"));
             v.maxLength = integer(vm.get("maxLength"));
             v.pattern = (String) vm.get("pattern");
@@ -333,6 +351,8 @@ public final class ContractJson {
             Object maxSize = fm.get("maxSize");
             f.maxSize = maxSize == null ? null : ((Number) maxSize).longValue();
             f.deprecated = deprecation(fm.get("deprecated"));
+            f.requiredIf = requiredIf(name, fm.get("requiredIf"), c.readErrors);
+            f.roles = roles(name, fm.get("roles"), c.readErrors);
             f.schema = (Map<String, Object>) fm.get("schema");
             f.dnsNames = (List<String>) fm.get("dnsNames");
             f.keyAlgorithms = (List<String>) fm.get("keyAlgorithms");
@@ -364,6 +384,74 @@ public final class ContractJson {
                     (k, v) -> c.profiles.defaults.put(k, new java.util.TreeMap<>((Map<String, Object>) v)));
         }
         return c;
+    }
+
+    /**
+     * {@code requiredIf: {VAR: value}} (SPEC §4.2.1): one variable name and a string, integer or boolean value. What
+     * the condition may name is checked by {@link DeclarationValidator}.
+     */
+    private static RequiredIf requiredIf(String input, Object o, List<String> errors) {
+        if (o == null) {
+            return null;
+        }
+        if (!(o instanceof Map<?, ?> rm) || rm.size() != 1) {
+            errors.add(input + ": requiredIf must name one variable and its value: {VAR: value}");
+            return null;
+        }
+        Map.Entry<?, ?> e = rm.entrySet().iterator().next();
+        Object value = e.getValue();
+        if (!(e.getKey() instanceof String var) || !Names.ENV_NAME.matcher(var).matches()
+                || !(value instanceof String || value instanceof Long || value instanceof Boolean)) {
+            errors.add(input + ": requiredIf must name one variable and a string, integer or boolean value");
+            return null;
+        }
+        return new RequiredIf(var, value);
+    }
+
+    /** A list of roles (SPEC §4.9): DNS labels, at least one, none listed twice. */
+    private static List<String> roles(String where, Object o, List<String> errors) {
+        if (o == null) {
+            return null;
+        }
+        if (!(o instanceof List<?> l) || l.isEmpty() || !l.stream().allMatch(String.class::isInstance)) {
+            errors.add(where + ": roles must be a list of at least one role name");
+            return null;
+        }
+        List<String> roles = new ArrayList<>();
+        for (Object x : l) {
+            String r = (String) x;
+            if (!Names.ROLE_NAME.matcher(r).matches()) {
+                errors.add(where + ": role \"" + r + "\" must be a DNS label");
+            } else if (roles.contains(r)) {
+                errors.add(where + ": role " + r + " is listed twice");
+            }
+            roles.add(r);
+        }
+        return List.copyOf(roles);
+    }
+
+    /**
+     * The well-known fragments a contract includes (SPEC §4.8), {@code name@major}. Their variables are inline in
+     * {@code vars}, so only the list is read.
+     */
+    private static void includes(Object o, Contract c) {
+        if (o == null) {
+            return;
+        }
+        if (!(o instanceof List<?> l) || !l.stream().allMatch(String.class::isInstance)) {
+            c.readErrors.add("includes must be a list of fragment names, such as otel@1");
+            return;
+        }
+        for (Object x : l) {
+            String name = (String) x;
+            if (!Names.FRAGMENT_REF.matcher(name).matches()) {
+                c.readErrors.add("includes: \"" + name + "\" is not a fragment name, name@major");
+            } else if (c.includes.contains(name)) {
+                c.readErrors.add("includes: " + name + " is listed twice");
+            } else {
+                c.includes.add(name);
+            }
+        }
     }
 
     @SuppressWarnings("unchecked")
