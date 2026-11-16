@@ -132,6 +132,29 @@ jobs:
       - name: "Example: smoke test"
         run: examples/orders/smoke.sh
 
+      # The shop example: contract-first mode with roles, requiredIf and the otel@1 fragment. Its test matrix
+      # (ShopConfigTest), then the built jar.
+      - name: "Example (shop): test matrix and smoke test"
+        run: |
+          mvn -f examples/shop/pom.xml verify
+          examples/shop/smoke.sh
+
+      # cue vet -c of contract.cue and contract.json against the meta-schema, and the check that they are the same
+      # contract (the app loads contract.json).
+      - name: "Example (shop): cue vet the contract"
+        run: examples/shop/check-contract.sh docuconf-go/spec/cue
+
+      - name: "Example (shop): generated docs are up to date"
+        working-directory: examples/shop
+        run: |
+          docuconf docs contract.cue -o CONFIG.md
+          docuconf docs contract.cue --format agents -o CONFIG.agents.md
+          docuconf docs contract.cue --format model -o docs.json
+          git diff --exit-code -- CONFIG.md CONFIG.agents.md docs.json
+          docuconf docs contract.cue --check CONFIG.md
+          docuconf docs contract.cue --format agents --check CONFIG.agents.md
+          docuconf docs contract.cue --format model --check docs.json
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.14.3"

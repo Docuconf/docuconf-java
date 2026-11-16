@@ -682,6 +682,9 @@ The load checks them as the meta-schema does, and rejects a contract that breaks
 deprecated input; input roles that are not the contract's; and roles without a required `DOCUCONF_ROLE` enum
 whose values are the roles.
 
+[`examples/shop`](examples/shop/) is a small program in this mode, with a `web` and a `worker` role, `requiredIf` on a
+variable and on a file input, and the `otel@1` fragment; its tests run the whole matrix.
+
 ## Conformance
 
 `ConformanceTest` (in `docuconf-core`) runs the shared suite from docuconf-go (`conformance/cases.json`, SPEC
@@ -735,7 +738,8 @@ Java 17+. Tests vet exported contracts with `cue vet -c` against the meta-schema
 exported contract is the golden file `docuconf-sample/src/test/resources/golden/contract.cue` (regenerate with
 `mvn test -pl docuconf-sample -am -Ddocuconf.updateGolden=true`). `ReadmeSnippetsTest` there checks that every
 snippet on this page is in a file CI compiles or runs. The examples are separate builds: `examples/orders`
-(`quickstart.sh`, `smoke.sh`) and `examples/orders-gradle`.
+(`quickstart.sh`, `smoke.sh`), `examples/orders-gradle` and `examples/shop` (contract-first mode; `smoke.sh`,
+`check-contract.sh`).
 
 Not done yet: `requiredIf`, `roles` and `includes` in the Java declaration API (contract-first mode reads them),
 Markdown docs generation, multi-profile activation (`SPRING_PROFILES_ACTIVE=prod,eu` is rejected by
