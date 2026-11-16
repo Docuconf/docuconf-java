@@ -105,14 +105,33 @@ public final class FileChecker {
      * @return the outcome
      */
     public static Outcome check(FileSpec f, Path path, Instant now, Function<String, String> env) {
+        return check(f, f.required, null, path, now, env);
+    }
+
+    /**
+     * Checks one file input that is required, or not, at this boot: a {@code requiredIf} condition that holds makes
+     * it required (SPEC §4.2.1), and a role that does not use it makes it optional (SPEC §4.9).
+     *
+     * @param f the input
+     * @param required whether it must exist
+     * @param requiredWhen the condition that makes it required, such as {@code TLS_ENABLED is true}, appended to
+     *     the {@code file_missing} message; {@code null} when none does
+     * @param path where it is, from {@link #resolve(FileSpec, Function)}
+     * @param now the current time, for certificate validity
+     * @param env looks up variables, for a keystore's password
+     * @return the outcome
+     */
+    public static Outcome check(FileSpec f, boolean required, String requiredWhen, Path path, Instant now,
+            Function<String, String> env) {
         List<Violation> out = new ArrayList<>();
         String n = f.name;
         boolean dir = f.type == FileType.TLS;
         boolean exists = dir ? Files.isDirectory(path) : Files.isRegularFile(path);
         if (!exists) {
-            if (f.required) {
+            if (required) {
                 String what = dir ? "directory " : "";
-                out.add(new Violation(Code.FILE_MISSING, n, what + path + " does not exist"));
+                out.add(new Violation(Code.FILE_MISSING, n, what + path + " does not exist"
+                        + (requiredWhen == null ? "" : ", and is required when " + requiredWhen)));
             }
             return new Outcome(out, path, false, null);
         }

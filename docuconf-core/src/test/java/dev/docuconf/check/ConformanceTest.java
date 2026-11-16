@@ -32,6 +32,9 @@ import org.junit.jupiter.api.io.TempDir;
  * Runs the shared conformance suite (SPEC §12, docuconf-go {@code conformance/README.md}) through
  * {@link ContractFirst}. Each case is a test named by its {@code id}, so a failure points at its YAML source.
  *
+ * <p>{@code cases.pending.json}, next to {@code cases.json}, runs the same way, except that a case with a tag
+ * the runner does not know is skipped without failing, and the run is skipped when the file is missing.
+ *
  * <p>{@code cases.json} is found through {@code DOCUCONF_CONFORMANCE}, else {@code docuconf-go/conformance/cases.json}
  * in this directory or a parent (a sibling checkout of docuconf-go). When it is missing the suite is skipped,
  * unless {@code DOCUCONF_REQUIRE_CONFORMANCE=1}, which also fails the run when any case is skipped.
@@ -47,7 +50,7 @@ class ConformanceTest {
      * transitional tag.
      */
     static final Set<String> SUPPORTED = Set.of("int64", "json-schema", "key-set", "deprecated", "strict-parsing",
-            "files", "profiles", "overlays");
+            "files", "profiles", "overlays", "required-if", "roles");
 
     @TempDir
     Path tmp;
@@ -67,17 +70,41 @@ class ConformanceTest {
     }
 
     @TestFactory
-    @SuppressWarnings("unchecked")
     Stream<DynamicTest> conformance() throws IOException {
         Path file = casesFile();
+        boolean require = "1".equals(System.getenv("DOCUCONF_REQUIRE_CONFORMANCE"));
         if (!Files.isRegularFile(file)) {
-            if ("1".equals(System.getenv("DOCUCONF_REQUIRE_CONFORMANCE"))) {
+            if (require) {
                 fail("conformance cases not found at " + file.toAbsolutePath()
                         + " (set DOCUCONF_CONFORMANCE to docuconf-go's conformance/cases.json)");
             }
             Assumptions.abort("conformance cases not found at " + file.toAbsolutePath()
                     + "; set DOCUCONF_CONFORMANCE");
         }
+        return suite(file, require);
+    }
+
+    /**
+     * Runs {@code cases.pending.json}, next to {@code cases.json}: the cases of features not every SDK has yet
+     * (docuconf-go {@code conformance/README.md}, "Pending cases"). A case whose tags this runner supports must pass;
+     * one with a tag it does not know is skipped without failing the run. Skipped when the file is missing.
+     */
+    @TestFactory
+    Stream<DynamicTest> pending() throws IOException {
+        Path file = casesFile().resolveSibling("cases.pending.json");
+        if (!Files.isRegularFile(file)) {
+            Assumptions.abort("pending conformance cases not found at " + file.toAbsolutePath());
+        }
+        return suite(file, false);
+    }
+
+    /**
+     * One test per case of a cases file, and a summary.
+     *
+     * @param skipsFail whether a skipped case fails the summary
+     */
+    @SuppressWarnings("unchecked")
+    private Stream<DynamicTest> suite(Path file, boolean skipsFail) throws IOException {
         Map<String, Object> doc = (Map<String, Object>) Json.parse(Files.readString(file, StandardCharsets.UTF_8));
         assertEquals(1L, doc.get("version"), "unsupported cases.json version");
         List<Map<String, Object>> cases = (List<Map<String, Object>>) doc.get("cases");
@@ -113,7 +140,7 @@ class ConformanceTest {
             for (String id : failed) {
                 System.out.println("conformance: FAILED " + id);
             }
-            if ("1".equals(System.getenv("DOCUCONF_REQUIRE_CONFORMANCE"))) {
+            if (skipsFail) {
                 assertEquals(0, skipped.get(), "conformance cases were skipped; every case must run");
             }
         }));

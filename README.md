@@ -663,6 +663,25 @@ values are read once, so a contract that declares `reload: watch` for a file inp
 with an `IllegalArgumentException` naming each one (SPEC section 11.2 item 8); declare `reload: restart`, or use the
 Spring Boot integration, which reloads watched inputs.
 
+The contract may also use these, which the Java declaration API does not have yet:
+
+- **`requiredIf`** (SPEC section 4.2.1), on a variable or a file input: `requiredIf: {TLS_ENABLED: true}` makes it
+  required while the condition variable's loaded value (environment, overlay, profile or default) is the value. A
+  missing variable is `missing_required` (`CA_SUBJECT: is required when TLS_ENABLED is true`, a string value
+  quoted as JSON), a missing file `file_missing` with `, and is required when ...` appended. A condition variable
+  with a violation of its own makes nothing required.
+- **`roles`** (SPEC section 4.9): `DOCUCONF_ROLE` names the workload's role, and an input whose `roles` leave it out
+  is optional. With no role, or one the contract does not declare, only the inputs every role uses are required,
+  so the role is the one problem reported.
+- **`includes`** (SPEC section 4.8): the well-known fragments, read into `Contract.includes`. Their variables are
+  inline in `vars` and load like any other.
+
+The load checks them as the meta-schema does, and rejects a contract that breaks a rule with an
+`IllegalArgumentException`: a condition on an undeclared, secret or non-plain variable (only `string`, `int`,
+`bool` and `enum` compare as written), or with a value it cannot have; `requiredIf` on a required, defaulted or
+deprecated input; input roles that are not the contract's; and roles without a required `DOCUCONF_ROLE` enum
+whose values are the roles.
+
 ## Conformance
 
 `ConformanceTest` (in `docuconf-core`) runs the shared suite from docuconf-go (`conformance/cases.json`, SPEC
@@ -672,9 +691,13 @@ holding its files, which is the case's `DOCUCONF_FILE_ROOT`. Set `DOCUCONF_CONFO
 skipped; without them it looks for `docuconf-go/conformance/cases.json` in the working directory and its parents.
 CI runs it against the pinned docuconf-go commit, and nightly against `main`.
 
+It also runs `cases.pending.json`, next to `cases.json`: the cases of features not every SDK has yet. A pending case
+whose tags the runner supports must pass; one with a tag it does not know is skipped without failing, and the
+pending run is skipped when the file is missing.
+
 **Capability tags.** The runner keeps an allow-list of the tags this SDK supports: `int64`, `json-schema`,
-`key-set`, `deprecated`, `strict-parsing`, `files`, `profiles` and `overlays`, which is every tag in the suite. No
-case is skipped. A case with a tag the runner does not know is skipped, never run (SPEC section 12), and CI fails
+`key-set`, `deprecated`, `strict-parsing`, `files`, `profiles`, `overlays`, `required-if` and `roles`, which is
+every tag in the suite. No case is skipped. A case with a tag the runner does not know is skipped, never run (SPEC section 12), and CI fails
 on any skipped case.
 
 **Export.** `ExportConformanceTest` (in `docuconf-processor`) declares the suite's export fixture
@@ -714,7 +737,8 @@ exported contract is the golden file `docuconf-sample/src/test/resources/golden/
 snippet on this page is in a file CI compiles or runs. The examples are separate builds: `examples/orders`
 (`quickstart.sh`, `smoke.sh`) and `examples/orders-gradle`.
 
-Not done yet: Markdown docs generation, multi-profile activation (`SPRING_PROFILES_ACTIVE=prod,eu` is rejected by
+Not done yet: `requiredIf`, `roles` and `includes` in the Java declaration API (contract-first mode reads them),
+Markdown docs generation, multi-profile activation (`SPRING_PROFILES_ACTIVE=prod,eu` is rejected by
 the contract; see SPEC section 13 question 5), and Gradle incremental annotation processing (the processor reads
 JavaBean field initializers through the javac tree API, which Gradle's incremental mode hides).
 
