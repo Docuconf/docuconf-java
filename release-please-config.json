@@ -101,6 +101,10 @@
         },
         {
           "type": "generic",
+          "path": "examples/shop/pom.xml"
+        },
+        {
+          "type": "generic",
           "path": "README.md"
         }
       ]
