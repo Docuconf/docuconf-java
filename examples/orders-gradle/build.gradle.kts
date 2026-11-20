@@ -16,12 +16,12 @@ val springBootVersion = providers.gradleProperty("springBootVersion").getOrElse(
 // x-release-please-start-version: the release PR sets the SDK version here
 // docuconf: start dependencies
 dependencies {
-    implementation(platform("dev.docuconf:docuconf-bom:0.1.0-SNAPSHOT"))
+    implementation(platform("dev.docuconf:docuconf-bom:0.2.0"))
     implementation(platform("org.springframework.boot:spring-boot-dependencies:$springBootVersion"))
     implementation("dev.docuconf:docuconf-spring")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-validation")
-    annotationProcessor(platform("dev.docuconf:docuconf-bom:0.1.0-SNAPSHOT"))
+    annotationProcessor(platform("dev.docuconf:docuconf-bom:0.2.0"))
     annotationProcessor(platform("org.springframework.boot:spring-boot-dependencies:$springBootVersion"))
     annotationProcessor("dev.docuconf:docuconf-processor")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
