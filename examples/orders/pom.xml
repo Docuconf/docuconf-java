@@ -30,7 +30,7 @@
       <dependency>
         <groupId>dev.docuconf</groupId>
         <artifactId>docuconf-bom</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.2.0</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -99,7 +99,7 @@
       <plugin>
         <groupId>dev.docuconf</groupId>
         <artifactId>docuconf-maven-plugin</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.2.0</version>
         <executions>
           <execution>
             <goals>
